@@ -1,0 +1,2 @@
+reprompty/release8/** filter=lfs diff=lfs merge=lfs -text
+reprompty/release9/** filter=lfs diff=lfs merge=lfs -text
