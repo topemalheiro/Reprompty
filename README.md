@@ -37,7 +37,7 @@ Reprompty enables you to:
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/reprompty.git
+git clone https://github.com/topemalheiro/Reprompty.git
 
 # Install dependencies
 cd reprompty
