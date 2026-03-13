@@ -50,7 +50,7 @@ let mainWindow: any = null;
 // @ts-ignore
 let tray: any = null;
 
-const isDev = true;
+const isDev = !app.isPackaged;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -60,7 +60,7 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
-      preload: join(__dirname, "preload.js"),
+      preload: join(__dirname, "../preload/index.js"),
     },
   });
 
