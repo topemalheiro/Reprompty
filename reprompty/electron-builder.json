@@ -2,7 +2,7 @@
   "appId": "com.reprompty.app",
   "productName": "Reprompty",
   "directories": {
-    "output": "release"
+    "output": "release-new"
   },
   "files": [
     "dist/**/*",
@@ -14,16 +14,9 @@
   "win": {
     "target": [
       {
-        "target": "nsis",
+        "target": "dir",
         "arch": ["x64"]
       }
-    ],
-    "artifactName": "${productName}-${version}-Setup.${ext}"
-  },
-  "nsis": {
-    "oneClick": false,
-    "perMachine": false,
-    "allowToChangeInstallationDirectory": true,
-    "deleteAppDataOnUninstall": false
+    ]
   }
 }

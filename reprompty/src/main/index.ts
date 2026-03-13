@@ -150,6 +150,33 @@ ipcMain.handle("run-mcp-tool", async (_event: any, toolName: string, args: Recor
   return runMCPTool(toolName, args);
 });
 
+// Connection management handlers
+// In-memory storage for connections (in production, this would be persisted)
+const connections: Array<{id: string; name: string; type: string; config: Record<string, unknown>}> = [];
+
+ipcMain.handle("list-connections", async () => {
+  console.log("[IPC] list-connections called, returning:", connections);
+  return connections;
+});
+
+ipcMain.handle("add-connection", async (_event: any, args: {name: string; type: string; config: Record<string, unknown>}) => {
+  const id = Date.now().toString();
+  const connection = { id, ...args };
+  connections.push(connection);
+  console.log("[IPC] add-connection:", connection);
+  return connection;
+});
+
+ipcMain.handle("remove-connection", async (_event: any, id: string) => {
+  const index = connections.findIndex(c => c.id === id);
+  if (index !== -1) {
+    connections.splice(index, 1);
+    console.log("[IPC] remove-connection:", id);
+    return true;
+  }
+  return false;
+});
+
 // Handle external links
 ipcMain.on("open-external", (_event, url: string) => {
   shell.openExternal(url);
