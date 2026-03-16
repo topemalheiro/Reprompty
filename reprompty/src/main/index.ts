@@ -84,14 +84,49 @@ function createWindow() {
 }
 
 function createTray() {
-  // Create a simple 16x16 triangle icon for the tray
-  // This is a 16x16 cyan triangle PNG
-  const iconDataUrl = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAA2ElEQVQ4T6WTuw3CQBBE3y4OQIQgRaACIhE5AjfgClyBK3AEjkBEB6hUKhUKVUJEBBEBkYTNJu3G8VrtjTTa1Zv/5s3s7FoB/1uN1QB+AJ9RL2AH7IE7YA+8AB9RM3ADbIEtcAVugCfgM2qGz8AtsAau8gTu8wf+8gf+9Af+8gf+8gf+8gf+8gf+8gf+8gf+8gf+8gf+8gf+8gf+8gf+8gf+8gf+8gf+8gf+8gf+8gf+8gf+8gf+8gf+8gf+8gf+8gf+8gf+8gf+8gf+8gf+8gf+8gf+8gf+8gf+8gf+8gf+8gf+8gX8AOHUCFAkCALsAAAAASUVORK5CYII=";
+  let icon;
   
-  const icon = nativeImage.createFromDataURL(iconDataUrl);
+  // Try to load icon from file first (works in both dev and production)
+  try {
+    const fs = require("fs");
+    
+    // Determine the correct icon path based on whether app is packaged
+    let iconPath: string;
+    if (isDev) {
+      // In development, look in project root/build folder
+      iconPath = join(__dirname, "../../build/icon.png");
+    } else {
+      // In production, look in resources folder
+      iconPath = join(process.resourcesPath || __dirname, "icon.png");
+    }
+    
+    console.log("[Tray] isDev:", isDev);
+    console.log("[Tray] __dirname:", __dirname);
+    console.log("[Tray] process.resourcesPath:", process.resourcesPath);
+    console.log("[Tray] Looking for icon at:", iconPath);
+    
+    if (fs.existsSync(iconPath)) {
+      const iconBuffer = fs.readFileSync(iconPath);
+      icon = nativeImage.createFromBuffer(iconBuffer);
+      console.log("[Tray] Successfully loaded icon from file:", iconPath);
+    } else {
+      throw new Error("Icon file not found at: " + iconPath);
+    }
+  } catch (e) {
+    // Fallback: Create a larger 32x32 cyan triangle icon
+    console.log("[Tray] Could not load icon from file, using fallback base64 icon:", e);
+    
+    // 32x32 cyan triangle icon
+    const iconDataUrl = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAhElEQVRYR+2WMQ6AIAwD+/+P1oGBsVBsbLTc1EtLiJDi7kJb0iHJt7NJ+vLpBwDwLwCA/xIAgH8BAPyXAMD/CgDgvwQA4F8AAP8lAAD/IQAA/yEAAP8hAAD/IQAA/yEAAP8hAAD/IQAA/yEAAP8hAAD/IQAA/yEAAP8hAAD/IQAA/yEAAP8hAAD/IQAA/yEAAP8hAAD/IXoA7wABVQJYpgAAAABJRU5ErkJggg==";
+    icon = nativeImage.createFromDataURL(iconDataUrl);
+  }
   
   console.log("[Tray] Creating tray icon, size:", icon.getSize());
   console.log("[Tray] Is empty:", icon.isEmpty());
+  
+  if (icon.isEmpty()) {
+    console.error("[Tray] ERROR: Icon is empty! Using default empty icon.");
+  }
   
   tray = new Tray(icon);
   
