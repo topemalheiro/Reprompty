@@ -2,7 +2,7 @@
   "appId": "com.reprompty.app",
   "productName": "Reprompty",
   "directories": {
-    "output": "release-new"
+    "output": "release8"
   },
   "files": [
     "dist/**/*",
@@ -11,6 +11,13 @@
   "extraMetadata": {
     "main": "dist/main/index.js"
   },
+  "extraResources": [
+    {
+      "from": "build",
+      "to": ".",
+      "filter": ["**/*"]
+    }
+  ],
   "win": {
     "target": [
       {
