@@ -1,59 +1,105 @@
-import { createRequire } from "node:module";
+// ============================================================================
+// REPROMPTY - Electron Main Process
+// ============================================================================
 
-// Use createRequire to avoid bundling issues
-// @ts-ignore
-const require = createRequire(import.meta.url);
-// @ts-ignore
-let electron;
-try {
-  // Try to get the electron module
-  const e = require("electron");
-  if (typeof e !== "object" || !e.app) {
-    // Fallback: use mock if not loaded properly
-    console.warn("Electron module not loaded properly, using mock");
-    electron = {
-      app: { whenReady: () => Promise.resolve(), quit: () => {}, on: () => {} },
-      BrowserWindow: class { constructor() { this.loadURL = () => {}; this.webContents = { openDevTools: () => {} }; this.on = () => {}; this.show = () => {}; this.hide = () => {}; this.focus = () => {}; } },
-      ipcMain: { handle: () => {}, on: () => {} },
-      Tray: class { constructor() { this.setToolTip = () => {}; this.setContextMenu = () => {}; this.on = () => {}; this.destroy = () => {}; } },
-      Menu: { buildFromTemplate: () => ({ popup: () => {}, destroy: () => {} }) },
-      nativeImage: { createFromDataURL: (dataUrl: string) => ({ isEmpty: () => !dataUrl, getSize: () => ({ width: 16, height: 16 }) }) },
-      shell: { openExternal: () => Promise.resolve() }
+import fs from "node:fs";
+import nodePath from "node:path";
+import { join } from "node:path";
+
+// CRITICAL EARLY LOG - write directly to stderr to bypass any console override
+let logFile: string;
+
+function setupEarlyLogging() {
+  try {
+    const homeDir = process.env.USERPROFILE || process.env.HOME || ".";
+    const logDir = nodePath.join(homeDir, "reprompty-logs");
+    if (!fs.existsSync(logDir)) {
+      fs.mkdirSync(logDir, { recursive: true });
+    }
+    logFile = nodePath.join(logDir, `reprompty-${new Date().toISOString().split('T')[0]}.log`);
+    
+    const origLog = console.log;
+    const origWarn = console.warn;
+    const origErr = console.error;
+
+    console.log = (...args: any[]) => {
+      const msg = args.map((a: any) => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
+      const timestamp = new Date().toISOString();
+      const logLine = `[${timestamp}] ${msg}\n`;
+      try { fs.appendFileSync(logFile!, logLine); } catch { /* ignore */ }
+      origLog.apply(console, args);
     };
-  } else {
-    electron = e;
+    console.warn = (...args: any[]) => {
+      const msg = args.map((a: any) => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
+      const timestamp = new Date().toISOString();
+      const logLine = `[${timestamp}] WARN: ${msg}\n`;
+      try { fs.appendFileSync(logFile!, logLine); } catch { /* ignore */ }
+      origWarn.apply(console, args);
+    };
+    console.error = (...args: any[]) => {
+      const msg = args.map((a: any) => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
+      const timestamp = new Date().toISOString();
+      const logLine = `[${timestamp}] ERROR: ${msg}\n`;
+      try { fs.appendFileSync(logFile!, logLine); } catch { /* ignore */ }
+      origErr.apply(console, args);
+    };
+    
+    console.log("=== EARLY LOGGING SETUP ===");
+    console.log("process.resourcesPath:", process.resourcesPath);
+    console.log("User home:", homeDir);
+    console.log("Log file:", logFile);
+    console.log("process.versions.electron:", process.versions?.electron);
+  } catch (e) {
+    process.stderr.write(`Failed to setup early logging: ${e}\n`);
   }
-} catch (err) {
-  console.error("Failed to require electron:", err);
-  electron = {
-    app: { whenReady: () => Promise.resolve(), quit: () => {}, on: () => {} },
-    BrowserWindow: () => ({ loadURL: () => {}, webContents: { openDevTools: () => {} }, on: () => {}, show: () => {}, hide: () => {}, focus: () => {} }),
-    ipcMain: { handle: () => {}, on: () => {} },
-    Tray: () => {},
-    Menu: { buildFromTemplate: () => ({ popup: () => {}, destroy: () => {} }) },
-    nativeImage: { createFromDataURL: (dataUrl: string) => ({ isEmpty: () => !dataUrl, getSize: () => ({ width: 16, height: 16 }) }) },
-    shell: { openExternal: () => Promise.resolve() }
-  };
 }
 
-// @ts-ignore
-const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, shell } = electron;
-import path from "path";
-import { join } from "node:path";
+setupEarlyLogging();
+
+// Verify we're actually in Electron
+const isInElectron = !!process.versions?.electron;
+console.log("[Main] Running in Electron:", isInElectron);
+console.log("[Main] Electron version:", process.versions?.electron);
+
+if (!isInElectron) {
+  console.error("❌ FATAL: Not running in Electron main process!");
+  process.exit(1);
+}
+
+// Use require() to get Electron modules - this works in bundled code
+const electron = {
+  app: require('electron').app,
+  BrowserWindow: require('electron').BrowserWindow,
+  Tray: require('electron').Tray,
+  Menu: require('electron').Menu,
+  nativeImage: require('electron').nativeImage,
+  ipcMain: require('electron').ipcMain,
+  shell: require('electron').shell
+};
+
+console.log("[Main] Using require() electron (real Electron)");
+console.log("[Main] nativeImage type:", typeof electron.nativeImage);
+console.log("[Main] nativeImage.createFromPath:", typeof electron.nativeImage?.createFromPath);
+console.log("[Main] nativeImage.createFromDataURL:", typeof electron.nativeImage?.createFromDataURL);
+
+// ============================================================================
+// APP SETUP
+// ============================================================================
 
 // Only import MCP tools when needed (lazy load)
 let runMCPTool: (toolName: string, args: Record<string, unknown>) => Promise<string>;
 
-// Electron main process - rebuilt
-// @ts-ignore
+// Electron main process
 let mainWindow: any = null;
-// @ts-ignore
 let tray: any = null;
 
-const isDev = !app.isPackaged;
+const isDev = !electron.app.isPackaged;
 
 function createWindow() {
-  mainWindow = new BrowserWindow({
+  console.log("[Main] isDev:", isDev);
+  console.log("[Main] app.isPackaged:", electron.app.isPackaged);
+  
+  mainWindow = new electron.BrowserWindow({
     width: 900,
     height: 700,
     title: "Reprompty",
@@ -64,14 +110,10 @@ function createWindow() {
     },
   });
 
-  if (isDev) {
-    mainWindow.loadURL("http://localhost:5173");
-    mainWindow.webContents.openDevTools();
-  } else {
-    mainWindow.loadFile(join(__dirname, "../renderer/index.html"));
-  }
+  // Always load production build - don't try to connect to dev server
+  mainWindow.loadFile(join(__dirname, "../renderer/index.html"));
 
-  mainWindow.on("close", (event) => {
+  mainWindow.on("close", (event: any) => {
     if (tray) {
       event.preventDefault();
       mainWindow?.hide();
@@ -84,53 +126,73 @@ function createWindow() {
 }
 
 function createTray() {
+  console.log("=== CREATE TRAY START ===");
+  console.log("[Tray] isDev:", isDev);
+  console.log("[Tray] __dirname:", __dirname);
+  console.log("[Tray] process.resourcesPath:", process.resourcesPath);
+  
   let icon;
   
-  // Try to load icon from file first (works in both dev and production)
-  try {
-    const fs = require("fs");
-    
-    // Determine the correct icon path based on whether app is packaged
-    let iconPath: string;
-    if (isDev) {
-      // In development, look in project root/build folder
-      iconPath = join(__dirname, "../../build/icon.png");
-    } else {
-      // In production, look in resources folder
-      iconPath = join(process.resourcesPath || __dirname, "icon.png");
+  // Try multiple icon sources - use createFromPath which handles ICO better
+  const iconPaths = [
+    join(__dirname, "../../build/icon.ico"),
+    join(__dirname, "../../build/icon.png"),
+    join(process.resourcesPath, "icon.ico"),
+    join(process.resourcesPath, "icon.png"),
+  ];
+  
+  // Try createFromPath for each file (works better with ICO files)
+  for (const iconPath of iconPaths) {
+    try {
+      console.log("[Tray] Trying createFromPath:", iconPath);
+      if (fs.existsSync(iconPath)) {
+        const size = fs.statSync(iconPath).size;
+        console.log("[Tray] File exists, size:", size);
+        
+        icon = electron.nativeImage.createFromPath(iconPath);
+        console.log("[Tray] Created icon from path, size:", icon.getSize(), "isEmpty:", icon.isEmpty());
+        
+        if (!icon.isEmpty() && icon.getSize().width > 0) {
+          console.log("[Tray] ✅ Successfully loaded icon from:", iconPath);
+          break;
+        } else {
+          console.log("[Tray] Icon is empty, trying next source");
+        }
+      }
+    } catch (e) {
+      console.log("[Tray] Failed to load from path:", e);
     }
-    
-    console.log("[Tray] isDev:", isDev);
-    console.log("[Tray] __dirname:", __dirname);
-    console.log("[Tray] process.resourcesPath:", process.resourcesPath);
-    console.log("[Tray] Looking for icon at:", iconPath);
-    
-    if (fs.existsSync(iconPath)) {
-      const iconBuffer = fs.readFileSync(iconPath);
-      icon = nativeImage.createFromBuffer(iconBuffer);
-      console.log("[Tray] Successfully loaded icon from file:", iconPath);
-    } else {
-      throw new Error("Icon file not found at: " + iconPath);
-    }
-  } catch (e) {
-    // Fallback: Create a larger 32x32 cyan triangle icon
-    console.log("[Tray] Could not load icon from file, using fallback base64 icon:", e);
-    
-    // 32x32 cyan triangle icon
-    const iconDataUrl = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAhElEQVRYR+2WMQ6AIAwD+/+P1oGBsVBsbLTc1EtLiJDi7kJb0iHJt7NJ+vLpBwDwLwCA/xIAgH8BAPyXAMD/CgDgvwQA4F8AAP8lAAD/IQAA/yEAAP8hAAD/IQAA/yEAAP8hAAD/IQAA/yEAAP8hAAD/IQAA/yEAAP8hAAD/IQAA/yEAAP8hAAD/IQAA/yEAAP8hAAD/IXoA7wABVQJYpgAAAABJRU5ErkJggg==";
-    icon = nativeImage.createFromDataURL(iconDataUrl);
   }
   
-  console.log("[Tray] Creating tray icon, size:", icon.getSize());
-  console.log("[Tray] Is empty:", icon.isEmpty());
-  
-  if (icon.isEmpty()) {
-    console.error("[Tray] ERROR: Icon is empty! Using default empty icon.");
+  // If no icon loaded, use fallback base64
+  if (!icon || icon.isEmpty()) {
+    console.log("[Tray] Using fallback base64 icon");
+    // Fallback: 32x32 cyan triangle icon (known working)
+    const iconDataUrl = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAhElEQVRYR+2WMQ6AIAwD+/+P1oGBsVBsbLTc1EtLiJDi7kJb0iHJt7NJ+vLpBwDwLwCA/xIAgH8BAPyXAMD/CgDgvwQA4F8AAP8lAAD/IQAA/yEAAP8hAAD/IQAA/yEAAP8hAAD/IQAA/yEAAP8hAAD/IQAA/yEAAP8hAAD/IQAA/yEAAP8hAAD/IQAA/yEAAP8hAAD/IQAA/yEAAP8hAAD/IQAA/yEAAP8hAAD/IQAA/yEAAP8hAAD/IQAA/yEAAP8hAAD/IQAA/yEAAP8hAAD/IQAA/yEAAP8hAAD/IXoA7wABVQJYpgAAAABJRU5ErkJggg==";
+    
+    try {
+      icon = electron.nativeImage.createFromDataURL(iconDataUrl);
+      console.log("[Tray] Created from data URL, size:", icon.getSize(), "isEmpty:", icon.isEmpty());
+    } catch (e) {
+      console.log("[Tray] Error creating from data URL:", e);
+    }
   }
   
-  tray = new Tray(icon);
+  const size = icon?.getSize();
+  console.log("[Tray] Final icon size:", size);
+  console.log("[Tray] Is empty:", icon?.isEmpty());
   
-  const contextMenu = Menu.buildFromTemplate([
+  if (!icon || icon.isEmpty()) {
+    console.error("[Tray] ❌ ERROR: Icon is empty! Cannot create tray without valid icon.");
+    return; // Don't create tray with empty icon
+  }
+  
+  console.log("[Tray] ✅ Icon loaded successfully");
+  console.log("[Tray] Creating new Tray...");
+  tray = new electron.Tray(icon);
+  console.log("[Tray] ✅ Tray created:", tray);
+  
+  const contextMenu = electron.Menu.buildFromTemplate([
     {
       label: "Show Reprompty",
       click: () => {
@@ -144,7 +206,7 @@ function createTray() {
       click: () => {
         tray?.destroy();
         tray = null;
-        app.quit();
+        electron.app.quit();
       }
     }
   ]);
@@ -156,28 +218,31 @@ function createTray() {
     mainWindow?.show();
     mainWindow?.focus();
   });
+  
+  console.log("=== CREATE TRAY END ===");
 }
 
 // App lifecycle
-app.whenReady().then(() => {
+electron.app.whenReady().then(() => {
+  console.log("=== APP READY ===");
   createWindow();
   createTray();
 });
 
-app.on("window-all-closed", () => {
+electron.app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
-    app.quit();
+    electron.app.quit();
   }
 });
 
-app.on("activate", () => {
-  if (BrowserWindow.getAllWindows().length === 0) {
+electron.app.on("activate", () => {
+  if (electron.BrowserWindow.getAllWindows().length === 0) {
     createWindow();
   }
 });
 
 // IPC handlers for MCP tools
-ipcMain.handle("run-mcp-tool", async (_event: any, toolName: string, args: Record<string, unknown>) => {
+electron.ipcMain.handle("run-mcp-tool", async (_event: any, toolName: string, args: Record<string, unknown>) => {
   if (!runMCPTool) {
     const mcpModule = await import("../mcp/index.js");
     runMCPTool = mcpModule.runMCPTool;
@@ -189,12 +254,12 @@ ipcMain.handle("run-mcp-tool", async (_event: any, toolName: string, args: Recor
 // In-memory storage for connections (in production, this would be persisted)
 const connections: Array<{id: string; name: string; type: string; config: Record<string, unknown>}> = [];
 
-ipcMain.handle("list-connections", async () => {
+electron.ipcMain.handle("list-connections", async () => {
   console.log("[IPC] list-connections called, returning:", connections);
   return connections;
 });
 
-ipcMain.handle("add-connection", async (_event: any, args: {name: string; type: string; config: Record<string, unknown>}) => {
+electron.ipcMain.handle("add-connection", async (_event: any, args: {name: string; type: string; config: Record<string, unknown>}) => {
   const id = Date.now().toString();
   const connection = { id, ...args };
   connections.push(connection);
@@ -202,7 +267,7 @@ ipcMain.handle("add-connection", async (_event: any, args: {name: string; type: 
   return connection;
 });
 
-ipcMain.handle("remove-connection", async (_event: any, id: string) => {
+electron.ipcMain.handle("remove-connection", async (_event: any, id: string) => {
   const index = connections.findIndex(c => c.id === id);
   if (index !== -1) {
     connections.splice(index, 1);
@@ -213,6 +278,6 @@ ipcMain.handle("remove-connection", async (_event: any, id: string) => {
 });
 
 // Handle external links
-ipcMain.on("open-external", (_event, url: string) => {
-  shell.openExternal(url);
+electron.ipcMain.on("open-external", (_event: any, url: string) => {
+  electron.shell.openExternal(url);
 });

@@ -9,6 +9,7 @@ export default defineConfig({
     react(),
     electron([
       {
+        // Main process - bundle for production
         entry: resolve(__dirname, "src/main/index.ts"),
         onstart(options) {
           options.startup();
@@ -16,8 +17,11 @@ export default defineConfig({
         vite: {
           build: {
             outDir: resolve(__dirname, "dist/main"),
+            minify: false,
             rollupOptions: {
-              external: ["electron", "electron-log"],
+              external: [
+                "electron",
+              ],
             },
           },
         },
