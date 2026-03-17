@@ -10,29 +10,43 @@ This project provides integration between Claude Code and Reprompty.
 - **React** - UI framework
 - **TypeScript** - Type safety
 
-## Current Status
+## Running the App
 
-**BUILD FAILURE**: The application cannot be built/run due to issues with `vite-plugin-electron` not properly importing the Electron module.
-
-When running `npm run dev` or `npm run start`, the app crashes with:
+```bash
+cd reprompty
+bun run dev    # Development mode
+bun run build  # Production build
 ```
-TypeError: Cannot read properties of undefined (reading 'whenReady')
-```
 
-This happens because `require("electron")` returns the path to `electron.exe` instead of the Electron module, making `app`, `BrowserWindow`, etc. undefined.
+## Build Output
 
-### Attempted Fixes
-
-1. Using different import styles (named imports, namespace imports)
-2. Modifying `vite.config.ts` rollup options
-3. Moving `electron` to `devDependencies`
-4. Downgrading `vite-plugin-electron` to v0.28.0
-
-None of these worked.
+The production build is located at:
+- `reprompty/release9/win-unpacked/Reprompty.exe`
 
 ## Icon
 
-The tray icon uses a simple cyan square (16x16 PNG base64):
+The tray icon uses an embedded 32x32 cyan triangle PNG (base64 encoded) that works in both dev and production modes:
+
 ```typescript
-const iconDataUrl = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAH0lEQVQ4T2NkYGD4z0ABYBw1gGE0DBhGwwBm0ACGYRQMAADt9Qf/WqLbFwAAAABJRU5ErkJggg==";
+const iconDataUrl = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAhElEQVRYR+2WMQ6AIAwD+/+P1oGBsVBsbLTc1EtLiJDi7kJb0iHJt7NJ+vLpBwDwLwCA/xIAgH8BAPyXAMD/CgDgvwQA4F8AAP8lAAD/IQAA/yEAAP8hAAD/IQAA/yEAAP8hAAD/IQAA/yEAAP8hAAD/IQAA/yEAAP8hAAD/IQAA/yEAAP8hAAD/IQAA/yEAAP8hAAD/IQAA/yEAAP8hAAD/IXoA7wABVQJYpgAAAABJRU5ErkJggg==";
+```
+
+This is loaded directly via `nativeImage.createFromDataURL()` which works reliably in both development and production builds.
+
+## Project Structure
+
+```
+reprompty/
+├── src/
+│   ├── main/          # Electron main process
+│   ├── preload/       # Preload scripts
+│   ├── renderer/      # React UI
+│   ├── core/          # Core functionality
+│   ├── mcp/          # MCP server integration
+│   └── platform/      # Platform-specific code
+├── skills/           # Claude Code skills
+├── release9/         # Production build output
+│   └── win-unpacked/
+│       └── Reprompty.exe
+└── package.json
 ```
