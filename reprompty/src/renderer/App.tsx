@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import ScriptsTab from "./ScriptsTab";
 
 // Type definitions for the electron API
 interface ElectronAPI {
@@ -8,6 +9,19 @@ interface ElectronAPI {
   listConnections: () => Promise<string>;
   removeConnection: (args: unknown) => Promise<string>;
   daisyChain: (args: unknown) => Promise<string>;
+  // Script management
+  listScripts: () => Promise<any[]>;
+  addScript: (args: { name: string; path: string; type: string; args: string[] }) => Promise<any>;
+  removeScript: (id: string) => Promise<boolean>;
+  runScript: (id: string) => Promise<boolean>;
+  stopScript: (id: string) => Promise<boolean>;
+  updateScript: (id: string, updates: Record<string, unknown>) => Promise<any>;
+  setScriptLayoutRole: (id: string, role: string | null) => Promise<boolean>;
+  getScriptOutput: (id: string) => Promise<string[]>;
+  pickScriptFile: () => Promise<string | null>;
+  onScriptOutput: (callback: (data: unknown) => void) => void;
+  onScriptStatusChanged: (callback: (data: unknown) => void) => void;
+  removeScriptListeners: () => void;
 }
 
 declare global {
@@ -24,7 +38,7 @@ interface Connection {
 }
 
 function App() {
-  const [activeTab, setActiveTab] = useState<"connections" | "send" | "spawn">("connections");
+  const [activeTab, setActiveTab] = useState<"connections" | "send" | "spawn" | "scripts">("connections");
   const [connections, setConnections] = useState<Connection[]>([]);
   const [newConnectionName, setNewConnectionName] = useState("");
   const [newConnectionSocket, setNewConnectionSocket] = useState("");
@@ -145,6 +159,12 @@ function App() {
         >
           Spawn Window
         </button>
+        <button
+          style={activeTab === "scripts" ? styles.navButtonActive : styles.navButton}
+          onClick={() => setActiveTab("scripts")}
+        >
+          Scripts
+        </button>
       </nav>
 
       {/* Content */}
@@ -243,6 +263,10 @@ function App() {
               Spawn Window
             </button>
           </div>
+        )}
+
+        {activeTab === "scripts" && (
+          <ScriptsTab setStatus={setStatus} />
         )}
 
         {/* Status */}

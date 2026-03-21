@@ -5,6 +5,7 @@
 import fs from "node:fs";
 import nodePath from "node:path";
 import { join } from "node:path";
+import { scriptManager } from "../core/script-manager.js";
 
 // CRITICAL EARLY LOG - write directly to stderr to bypass any console override
 let logFile: string;
@@ -66,21 +67,22 @@ if (!isInElectron) {
   process.exit(1);
 }
 
-// Use require() to get Electron modules - this works in bundled code
+// Use a single require('electron') call and destructure
+const electronModule = require('electron');
 const electron = {
-  app: require('electron').app,
-  BrowserWindow: require('electron').BrowserWindow,
-  Tray: require('electron').Tray,
-  Menu: require('electron').Menu,
-  nativeImage: require('electron').nativeImage,
-  ipcMain: require('electron').ipcMain,
-  shell: require('electron').shell
+  app: electronModule.app,
+  BrowserWindow: electronModule.BrowserWindow,
+  Tray: electronModule.Tray,
+  Menu: electronModule.Menu,
+  nativeImage: electronModule.nativeImage,
+  ipcMain: electronModule.ipcMain,
+  shell: electronModule.shell
 };
 
-console.log("[Main] Using require() electron (real Electron)");
-console.log("[Main] nativeImage type:", typeof electron.nativeImage);
-console.log("[Main] nativeImage.createFromPath:", typeof electron.nativeImage?.createFromPath);
-console.log("[Main] nativeImage.createFromDataURL:", typeof electron.nativeImage?.createFromDataURL);
+console.log("[Main] Electron modules loaded");
+console.log("[Main] app:", typeof electron.app);
+console.log("[Main] nativeImage:", typeof electron.nativeImage);
+console.log("[Main] BrowserWindow:", typeof electron.BrowserWindow);
 
 // ============================================================================
 // APP SETUP
@@ -222,11 +224,27 @@ function createTray() {
   console.log("=== CREATE TRAY END ===");
 }
 
+// Forward script events to renderer
+scriptManager.on("script-output", (data: any) => {
+  mainWindow?.webContents?.send("script-output", data);
+});
+scriptManager.on("script-status-changed", (data: any) => {
+  mainWindow?.webContents?.send("script-status-changed", data);
+});
+
 // App lifecycle
 electron.app.whenReady().then(() => {
   console.log("=== APP READY ===");
   createWindow();
   createTray();
+
+  // Auto-start registered scripts
+  try {
+    scriptManager.autoStartScripts();
+    console.log("[Main] Script auto-start complete");
+  } catch (err) {
+    console.error("[Main] Script auto-start failed:", err);
+  }
 });
 
 electron.app.on("window-all-closed", () => {
@@ -280,4 +298,61 @@ electron.ipcMain.handle("remove-connection", async (_event: any, id: string) => 
 // Handle external links
 electron.ipcMain.on("open-external", (_event: any, url: string) => {
   electron.shell.openExternal(url);
+});
+
+// ============================================================================
+// SCRIPT MANAGEMENT IPC HANDLERS
+// ============================================================================
+
+electron.ipcMain.handle("scripts-list", async () => {
+  return scriptManager.listScripts();
+});
+
+electron.ipcMain.handle("scripts-add", async (_event: any, args: { name: string; path: string; type?: string; args?: string[] }) => {
+  return scriptManager.addScript(args.name, args.path, args.type as any, args.args || []);
+});
+
+electron.ipcMain.handle("scripts-remove", async (_event: any, id: string) => {
+  return scriptManager.removeScript(id);
+});
+
+electron.ipcMain.handle("scripts-run", async (_event: any, id: string) => {
+  return scriptManager.runScript(id);
+});
+
+electron.ipcMain.handle("scripts-stop", async (_event: any, id: string) => {
+  return scriptManager.stopScript(id);
+});
+
+electron.ipcMain.handle("scripts-update", async (_event: any, id: string, updates: Record<string, unknown>) => {
+  return scriptManager.updateScript(id, updates);
+});
+
+electron.ipcMain.handle("scripts-set-layout-role", async (_event: any, id: string, role: string | null) => {
+  return scriptManager.setLayoutRole(id, role as any);
+});
+
+electron.ipcMain.handle("scripts-get-output", async (_event: any, id: string) => {
+  return scriptManager.getOutput(id);
+});
+
+electron.ipcMain.handle("scripts-pick-file", async () => {
+  const { dialog } = require("electron");
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ["openFile"],
+    filters: [
+      { name: "Scripts", extensions: ["ps1", "bat", "cmd", "vbs", "exe"] },
+      { name: "All Files", extensions: ["*"] },
+    ],
+  });
+  return result.canceled ? null : result.filePaths[0];
+});
+
+// Clean shutdown - stop all scripts
+electron.app.on("before-quit", () => {
+  try {
+    scriptManager.stopAll();
+  } catch {
+    // Ignore errors during shutdown
+  }
 });
