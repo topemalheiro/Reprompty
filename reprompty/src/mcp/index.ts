@@ -1,11 +1,12 @@
-import { 
-  connectionManager, 
-  ConnectionType, 
+import {
+  connectionManager,
+  ConnectionType,
   ConnectionConfig,
-  Connection 
+  Connection
 } from "../core/connection-manager.js";
 import { getOrCreateIpcClient, RepromptyIpcClient } from "../core/ipc-client.js";
 import { spawnWindow, findWindowByTitle } from "../platform/windows.js";
+import { scriptManager } from "../core/script-manager.js";
 
 export interface MCPTool {
   name: string;
@@ -115,6 +116,47 @@ export const tools: MCPTool[] = [
       required: ["prompts"],
     },
   },
+  {
+    name: "list_scripts",
+    description: "List all registered scripts with their current status",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+  },
+  {
+    name: "run_script",
+    description: "Run a registered script by name or ID",
+    inputSchema: {
+      type: "object",
+      properties: {
+        scriptId: { type: "string", description: "Script ID or name" },
+      },
+      required: ["scriptId"],
+    },
+  },
+  {
+    name: "stop_script",
+    description: "Stop a running script by name or ID",
+    inputSchema: {
+      type: "object",
+      properties: {
+        scriptId: { type: "string", description: "Script ID or name" },
+      },
+      required: ["scriptId"],
+    },
+  },
+  {
+    name: "apply_layout",
+    description: "Run the primary or secondary layout script for window positioning",
+    inputSchema: {
+      type: "object",
+      properties: {
+        role: { type: "string", enum: ["primary", "secondary"], description: "Which layout to apply" },
+      },
+      required: ["role"],
+    },
+  },
 ];
 
 // Tool implementations
@@ -199,6 +241,41 @@ export async function callTool(
       }
 
       return { content: [{ type: "text", text: results.join("\n") }] };
+    }
+
+    case "list_scripts": {
+      const scripts = scriptManager.listScripts();
+      return { content: [{ type: "text", text: JSON.stringify(scripts, null, 2) }] };
+    }
+
+    case "run_script": {
+      const scriptId = args.scriptId as string;
+      const script = scriptManager.findByIdOrName(scriptId);
+      if (!script) {
+        return { content: [{ type: "text", text: `Script not found: ${scriptId}` }] };
+      }
+      const started = scriptManager.runScript(script.id);
+      return { content: [{ type: "text", text: started ? `Started: ${script.name}` : `Failed to start: ${script.name}` }] };
+    }
+
+    case "stop_script": {
+      const scriptId = args.scriptId as string;
+      const script = scriptManager.findByIdOrName(scriptId);
+      if (!script) {
+        return { content: [{ type: "text", text: `Script not found: ${scriptId}` }] };
+      }
+      const stopped = scriptManager.stopScript(script.id);
+      return { content: [{ type: "text", text: stopped ? `Stopped: ${script.name}` : `Failed to stop: ${script.name}` }] };
+    }
+
+    case "apply_layout": {
+      const role = args.role as "primary" | "secondary";
+      const script = scriptManager.getLayoutScript(role);
+      if (!script) {
+        return { content: [{ type: "text", text: `No ${role} layout script configured` }] };
+      }
+      const started = scriptManager.runScript(script.id);
+      return { content: [{ type: "text", text: started ? `Applied ${role} layout: ${script.name}` : `Failed to apply layout` }] };
     }
 
     default:
