@@ -43,6 +43,41 @@ declare global {
   }
 }
 
+function Mascot() {
+  const [frame, setFrame] = useState(0);
+
+  useEffect(() => {
+    const timer = setInterval(() => setFrame((f) => (f + 1) % 4), 400);
+    return () => clearInterval(timer);
+  }, []);
+
+  const smoke = [
+    [")", "(", ")"],  // all visible
+    [" ", "(", ")"],  // top fades
+    [" ", " ", ")"],  // top+mid fade
+    [" ", " ", " "],  // all gone
+  ][frame];
+
+  const art = [
+    `             ${smoke[0]}`,
+    `            ${smoke[1]}`,
+    `   (o)_(o)   ${smoke[2]}`,
+    `  =( o_o )=   ~~*`,
+    `   /  Y  \\-----'`,
+    `  / /   \\ \\`,
+    ` | |     | |`,
+    `  \\_\\___/_/ \\_~`,
+    `    |   |`,
+    `   _|   |_`,
+  ].join("\n");
+
+  return (
+    <pre style={{ margin: 0, fontFamily: "monospace", fontSize: "11px", lineHeight: "1.15", color: "#666", position: "absolute", right: 20, top: 8, userSelect: "none" }}>
+      {art}
+    </pre>
+  );
+}
+
 function App() {
   const [activeTab, setActiveTab] = useState<"windows" | "send" | "spawn" | "scripts">("windows");
   const [detectedWindows, setDetectedWindows] = useState<DetectedWindow[]>([]);
@@ -110,9 +145,10 @@ function App() {
 
   return (
     <div style={s.container}>
-      <header style={s.header}>
+      <header style={{ ...s.header, position: "relative", overflow: "hidden" }}>
         <h1 style={s.title}>Reprompty</h1>
         <p style={s.subtitle}>Multi-window AI Agent Orchestration</p>
+        <Mascot />
       </header>
 
       <nav style={s.nav}>
