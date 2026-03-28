@@ -273,7 +273,7 @@ $callback = [WinDetect+EnumWindowsProc]{
     $wpid = [uint32]0
     [WinDetect]::GetWindowThreadProcessId($hWnd, [ref]$wpid) | Out-Null
     $handleInt = $hWnd.ToInt64()
-    $script:results.Add("$handleInt|$wpid|$title") | Out-Null
+    $global:results.Add("$handleInt|$wpid|$title") | Out-Null
   }
   return $true
 }
@@ -302,9 +302,9 @@ $results | ForEach-Object { Write-Output $_ }
       const pid = parseInt(parts[1], 10);
       const title = parts.slice(2).join("|");
 
-      // Deduplicate by PID (multiple windows from same process)
-      if (seen.has(pid)) continue;
-      seen.add(pid);
+      // Deduplicate by window handle (same PID can have multiple windows)
+      if (seen.has(handle)) continue;
+      seen.add(handle);
 
       // Extract folder from title: "folder - Visual Studio Code" or "folder - Kilo Code"
       const titleMatch = title.match(/^(.+?)\s+-\s+(Visual Studio Code|Kilo Code)/);
