@@ -384,18 +384,7 @@ electron.ipcMain.handle("send-to-detected", async (_event: any, args: { window: 
     }
   }
 
-  // Fallback to foreground
-  if (win.handle) {
-    try {
-      const { sendMessageForeground } = await import("../platform/windows.js");
-      const sent = await sendMessageForeground(win.handle, prompt);
-      return { success: sent, method: "foreground" };
-    } catch (err) {
-      console.error("[send-to-detected] Foreground failed:", err);
-    }
-  }
-
-  return { success: false, error: "No send method available" };
+  return { success: false, error: "CDP send failed - no foreground fallback" };
 });
 
 electron.ipcMain.handle("spawn-window", async (_event: any, args: { folderPath: string; windowName?: string }) => {
