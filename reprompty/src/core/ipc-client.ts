@@ -1,105 +1,270 @@
 import EventEmitter from "node:events";
 import * as crypto from "node:crypto";
-import { spawn, ChildProcessWithoutNullStreams } from "node:child_process";
+
+import ipc from "node-ipc";
+
+// ============================================================================
+// Kilo Code IPC Protocol Types (inlined from @roo-code/types)
+// ============================================================================
+
+const IpcMessageType = {
+  Connect: "Connect",
+  Disconnect: "Disconnect",
+  Ack: "Ack",
+  TaskCommand: "TaskCommand",
+  TaskEvent: "TaskEvent",
+} as const;
+
+const IpcOrigin = {
+  Client: "client",
+  Server: "server",
+} as const;
+
+const TaskCommandName = {
+  StartNewTask: "StartNewTask",
+  CancelTask: "CancelTask",
+  CloseTask: "CloseTask",
+  ResumeTask: "ResumeTask",
+  SendMessage: "SendMessage",
+} as const;
+
+interface Ack {
+  clientId: string;
+  pid: number;
+  ppid: number;
+}
+
+interface TaskCommand {
+  commandName: string;
+  data: unknown;
+}
+
+interface IpcMessage {
+  type: string;
+  origin: string;
+  clientId?: string;
+  relayClientId?: string;
+  data: unknown;
+}
+
+// ============================================================================
+// IPC Client - Connects to Kilo Code's named pipe
+// ============================================================================
 
 export class RepromptyIpcClient extends EventEmitter {
-  private socketPath: string;
-  private clientId: string;
-  private log: (...args: unknown[]) => void;
-  private isConnected = false;
-  private process?: ChildProcessWithoutNullStreams;
+  private readonly _socketPath: string;
+  private readonly _id: string;
+  private readonly _log: (...args: unknown[]) => void;
+  private _isConnected = false;
+  private _clientId?: string;
+  private _readyPromise: Promise<boolean>;
+  private _readyResolve?: (value: boolean) => void;
+  private _connectTimeout?: ReturnType<typeof setTimeout>;
 
-  constructor(socketPath: string, log = console.log) {
+  constructor(socketPath: string, log = console.log, timeoutMs = 5000) {
     super();
 
-    this.socketPath = socketPath;
-    this.clientId = `reprompty-${crypto.randomBytes(6).toString("hex")}`;
-    this.log = log;
+    this._socketPath = socketPath;
+    this._id = `reprompty-${crypto.randomBytes(6).toString("hex")}`;
+    this._log = log;
 
-    // For now, we'll use a simpler approach with vscode-cli
-    // The actual IPC connection happens via the VS Code extension
-    this.isConnected = true;
-    this.emit("connect");
+    this._readyPromise = new Promise<boolean>((resolve) => {
+      this._readyResolve = resolve;
+    });
+
+    ipc.config.silent = true;
+
+    ipc.connectTo(this._id, this._socketPath, () => {
+      ipc.of[this._id]?.on("connect", () => this.onConnect());
+      ipc.of[this._id]?.on("disconnect", () => this.onDisconnect());
+      ipc.of[this._id]?.on("message", (data: unknown) =>
+        this.onMessage(data)
+      );
+    });
+
+    this._connectTimeout = setTimeout(() => {
+      if (!this.isReady) {
+        this.log("[client] connection timeout after", timeoutMs, "ms");
+        this._readyResolve?.(false);
+        this._readyResolve = undefined;
+      }
+    }, timeoutMs);
+  }
+
+  private onConnect() {
+    if (this._isConnected) {
+      return;
+    }
+
+    this.log("[client#onConnect]");
+    this._isConnected = true;
+    this.emit(IpcMessageType.Connect);
+  }
+
+  private onDisconnect() {
+    if (!this._isConnected) {
+      return;
+    }
+
+    this.log("[client#onDisconnect]");
+    this._isConnected = false;
+    this._clientId = undefined;
+    this.emit(IpcMessageType.Disconnect);
+  }
+
+  private onMessage(data: unknown) {
+    if (typeof data !== "object" || data === null) {
+      this.log("[client#onMessage] invalid data ->", JSON.stringify(data));
+      return;
+    }
+
+    const payload = data as IpcMessage;
+
+    if (payload.origin === IpcOrigin.Server) {
+      switch (payload.type) {
+        case IpcMessageType.Ack: {
+          const ackData = payload.data as Ack;
+          this._clientId = ackData.clientId;
+          this.log(
+            "[client#onMessage] Ack received, clientId =",
+            this._clientId
+          );
+          if (this._connectTimeout) {
+            clearTimeout(this._connectTimeout);
+            this._connectTimeout = undefined;
+          }
+          this._readyResolve?.(true);
+          this._readyResolve = undefined;
+          this.emit(IpcMessageType.Ack, ackData);
+          break;
+        }
+        case IpcMessageType.TaskEvent:
+          this.emit(IpcMessageType.TaskEvent, payload.data);
+          break;
+        default:
+          this.log(
+            "[client#onMessage] unhandled:",
+            JSON.stringify(payload).substring(0, 200)
+          );
+      }
+    }
+  }
+
+  private log(...args: unknown[]) {
+    this._log(...args);
   }
 
   /**
-   * Send a message to the VS Code extension
-   * This appears in the chat without focusing the window
+   * Send a TaskCommand to the Kilo Code extension
    */
-  public sendMessage(text: string, images?: string[]): boolean {
-    if (!this.isConnected) {
-      this.log("[RepromptyIpcClient#sendMessage] not connected");
-      return false;
-    }
-
-    // Message format matching Roo Code / Kilo Code
-    const message = {
-      type: "task_command",
-      origin: "client",
-      data: {
-        commandName: "reprompty_send_message",
-        data: { text, images },
-      },
+  public sendCommand(command: TaskCommand) {
+    const message: IpcMessage = {
+      type: IpcMessageType.TaskCommand,
+      origin: IpcOrigin.Client,
+      clientId: this._clientId!,
+      data: command,
     };
 
-    this.log("[RepromptyIpcClient#sendMessage] sent:", text.substring(0, 50));
-    return true;
+    this.sendMessage(message);
   }
 
   /**
-   * Send a command to the VS Code extension
+   * Send a chat message to the active Kilo Code task (background, no focus)
    */
-  public sendCommand(command: string, data?: unknown): boolean {
-    if (!this.isConnected) {
-      this.log("[RepromptyIpcClient#sendCommand] not connected");
-      return false;
-    }
-
-    const message = {
-      type: "task_command",
-      origin: "client",
-      data: {
-        commandName: command,
-        data,
-      },
-    };
-
-    this.log("[RepromptyIpcClient#sendCommand] sent:", command);
-    return true;
+  public sendTaskMessage(text?: string, images?: string[]) {
+    this.sendCommand({
+      commandName: TaskCommandName.SendMessage,
+      data: { text, images },
+    });
   }
 
+  /**
+   * Start a new task in Kilo Code
+   */
+  public startNewTask(text: string, images?: string[]) {
+    this.sendCommand({
+      commandName: TaskCommandName.StartNewTask,
+      data: { text, images },
+    });
+  }
+
+  /**
+   * Send a raw IPC message
+   */
+  public sendMessage(message: IpcMessage) {
+    ipc.of[this._id]?.emit("message", message);
+  }
+
+  /**
+   * Disconnect from the named pipe
+   */
   public disconnect() {
-    if (this.process) {
-      this.process.kill();
+    if (this._connectTimeout) {
+      clearTimeout(this._connectTimeout);
+      this._connectTimeout = undefined;
     }
-    this.isConnected = false;
-    this.emit("disconnect");
+    try {
+      ipc.disconnect(this._id);
+    } catch (error) {
+      this.log(
+        "[client#disconnect] error ->",
+        error instanceof Error ? error.message : String(error)
+      );
+    }
+    this._isConnected = false;
+    this._clientId = undefined;
   }
 
-  public getSocketPath() {
-    return this.socketPath;
+  /**
+   * Wait for the client to be fully ready (connected + Ack received)
+   * Returns true if ready, false if timed out
+   */
+  public waitForReady(): Promise<boolean> {
+    if (this.isReady) return Promise.resolve(true);
+    return this._readyPromise;
   }
 
-  public getClientId() {
-    return this.clientId;
+  public get socketPath() {
+    return this._socketPath;
   }
 
-  public getIsConnected() {
-    return this.isConnected;
+  public get clientId() {
+    return this._clientId;
+  }
+
+  public get isConnected() {
+    return this._isConnected;
+  }
+
+  public get isReady() {
+    return this._isConnected && this._clientId !== undefined;
   }
 }
 
-// Cache of active IPC clients
+// ============================================================================
+// Client Cache
+// ============================================================================
+
 const clientCache = new Map<string, RepromptyIpcClient>();
 
-export function getOrCreateIpcClient(socketPath: string): RepromptyIpcClient {
-  let client = clientCache.get(socketPath);
-  
-  if (!client) {
-    client = new RepromptyIpcClient(socketPath);
-    clientCache.set(socketPath, client);
+export function getOrCreateIpcClient(
+  socketPath: string,
+  log = console.log
+): RepromptyIpcClient {
+  const existing = clientCache.get(socketPath);
+
+  if (existing && existing.isConnected) {
+    return existing;
   }
-  
+
+  // Clean up stale client if it exists
+  if (existing) {
+    existing.disconnect();
+    clientCache.delete(socketPath);
+  }
+
+  const client = new RepromptyIpcClient(socketPath, log);
+  clientCache.set(socketPath, client);
   return client;
 }
 
@@ -109,4 +274,8 @@ export function removeIpcClient(socketPath: string) {
     client.disconnect();
     clientCache.delete(socketPath);
   }
+}
+
+export function getAllClients(): Map<string, RepromptyIpcClient> {
+  return clientCache;
 }

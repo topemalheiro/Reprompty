@@ -6,6 +6,9 @@ import fs from "node:fs";
 import nodePath from "node:path";
 import { join } from "node:path";
 import { scriptManager } from "../core/script-manager.js";
+import { connectionManager } from "../core/connection-manager.js";
+import { getOrCreateIpcClient, removeIpcClient } from "../core/ipc-client.js";
+import type { VSCodeWindowConfig } from "../core/connection-manager.js";
 
 // CRITICAL EARLY LOG - write directly to stderr to bypass any console override
 let logFile: string;
@@ -245,6 +248,17 @@ electron.app.whenReady().then(() => {
   } catch (err) {
     console.error("[Main] Script auto-start failed:", err);
   }
+
+  // Start window auto-detection polling (every 5 seconds)
+  setInterval(async () => {
+    try {
+      const { detectWindows } = await import("../platform/windows.js");
+      const windows = detectWindows();
+      mainWindow?.webContents?.send("windows-detected", windows);
+    } catch {
+      // Ignore detection errors during polling
+    }
+  }, 5000);
 });
 
 electron.app.on("window-all-closed", () => {
@@ -268,31 +282,154 @@ electron.ipcMain.handle("run-mcp-tool", async (_event: any, toolName: string, ar
   return runMCPTool(toolName, args);
 });
 
-// Connection management handlers
-// In-memory storage for connections (in production, this would be persisted)
-const connections: Array<{id: string; name: string; type: string; config: Record<string, unknown>}> = [];
+// ============================================================================
+// CONNECTION MANAGEMENT IPC HANDLERS (persisted via ConnectionManager)
+// ============================================================================
 
 electron.ipcMain.handle("list-connections", async () => {
-  console.log("[IPC] list-connections called, returning:", connections);
-  return connections;
+  return connectionManager.listConnections();
 });
 
-electron.ipcMain.handle("add-connection", async (_event: any, args: {name: string; type: string; config: Record<string, unknown>}) => {
-  const id = Date.now().toString();
-  const connection = { id, ...args };
-  connections.push(connection);
-  console.log("[IPC] add-connection:", connection);
+electron.ipcMain.handle("add-connection", async (_event: any, args: { name: string; type: string; config: Record<string, unknown> }) => {
+  const connection = connectionManager.addConnection(
+    args.type as any,
+    args.name,
+    args.config as any
+  );
+  console.log("[IPC] add-connection:", connection.id, connection.name);
   return connection;
 });
 
 electron.ipcMain.handle("remove-connection", async (_event: any, id: string) => {
-  const index = connections.findIndex(c => c.id === id);
-  if (index !== -1) {
-    connections.splice(index, 1);
-    console.log("[IPC] remove-connection:", id);
-    return true;
+  // Clean up any IPC client for this connection
+  const conn = connectionManager.getConnection(id);
+  if (conn?.type === "vscode-window") {
+    const cfg = conn.config as VSCodeWindowConfig;
+    if (cfg.socketPath) {
+      removeIpcClient(cfg.socketPath);
+    }
   }
-  return false;
+  return connectionManager.removeConnection(id);
+});
+
+// ============================================================================
+// SEND PROMPT IPC HANDLER
+// ============================================================================
+
+electron.ipcMain.handle("send-prompt", async (_event: any, args: { connectionId: string; prompt: string }) => {
+  const conn = connectionManager.getConnection(args.connectionId);
+  if (!conn) {
+    return { success: false, error: "Connection not found" };
+  }
+
+  if (conn.type === "vscode-window") {
+    const cfg = conn.config as VSCodeWindowConfig;
+
+    // Background send via IPC pipe (Kilo Code)
+    if (cfg.method === "background" && cfg.socketPath) {
+      try {
+        const client = getOrCreateIpcClient(cfg.socketPath);
+        const ready = await client.waitForReady();
+        if (!ready) {
+          connectionManager.updateConnectionStatus(conn.id, "error");
+          return { success: false, error: "IPC client not ready (timeout)" };
+        }
+        client.sendTaskMessage(args.prompt);
+        connectionManager.updateConnectionStatus(conn.id, "active");
+        return { success: true, method: "background-ipc" };
+      } catch (err) {
+        connectionManager.updateConnectionStatus(conn.id, "error");
+        return { success: false, error: String(err) };
+      }
+    }
+
+    // Foreground send fallback (clipboard + SendKeys)
+    if (cfg.windowHandle) {
+      try {
+        const { sendMessageForeground } = await import("../platform/windows.js");
+        const sent = await sendMessageForeground(cfg.windowHandle, args.prompt);
+        connectionManager.updateConnectionStatus(conn.id, sent ? "active" : "error");
+        return { success: sent, method: "foreground" };
+      } catch (err) {
+        connectionManager.updateConnectionStatus(conn.id, "error");
+        return { success: false, error: String(err) };
+      }
+    }
+
+    return { success: false, error: "No socketPath or windowHandle configured" };
+  }
+
+  return { success: false, error: `Unsupported connection type: ${conn.type}` };
+});
+
+// ============================================================================
+// SPAWN WINDOW IPC HANDLER
+// ============================================================================
+
+// ============================================================================
+// WINDOW DETECTION IPC HANDLER
+// ============================================================================
+
+electron.ipcMain.handle("detect-windows", async () => {
+  try {
+    const { detectWindows } = await import("../platform/windows.js");
+    return detectWindows();
+  } catch (err) {
+    console.error("[IPC] detect-windows error:", err);
+    return [];
+  }
+});
+
+electron.ipcMain.handle("spawn-window", async (_event: any, args: { folderPath: string; windowName?: string }) => {
+  try {
+    const { spawnWindow } = await import("../platform/windows.js");
+    return spawnWindow(args.folderPath, args.windowName);
+  } catch (err) {
+    return { success: false, error: String(err) };
+  }
+});
+
+// ============================================================================
+// DAISY CHAIN IPC HANDLER
+// ============================================================================
+
+electron.ipcMain.handle("daisy-chain", async (_event: any, args: { prompts: Array<{ connectionId: string; prompt: string }>; continueOnError?: boolean }) => {
+  const results: Array<{ connectionId: string; success: boolean; error?: string }> = [];
+
+  for (const item of args.prompts) {
+    const conn = connectionManager.getConnection(item.connectionId);
+    if (!conn) {
+      results.push({ connectionId: item.connectionId, success: false, error: "Connection not found" });
+      if (!args.continueOnError) break;
+      continue;
+    }
+
+    if (conn.type === "vscode-window") {
+      const cfg = conn.config as VSCodeWindowConfig;
+      try {
+        if (cfg.method === "background" && cfg.socketPath) {
+          const client = getOrCreateIpcClient(cfg.socketPath);
+          const ready = await client.waitForReady();
+          if (!ready) throw new Error("IPC client not ready");
+          client.sendTaskMessage(item.prompt);
+        } else if (cfg.windowHandle) {
+          const { sendMessageForeground } = await import("../platform/windows.js");
+          await sendMessageForeground(cfg.windowHandle, item.prompt);
+        } else {
+          throw new Error("No socketPath or windowHandle");
+        }
+        results.push({ connectionId: item.connectionId, success: true });
+      } catch (err) {
+        results.push({ connectionId: item.connectionId, success: false, error: String(err) });
+        if (!args.continueOnError) break;
+      }
+    } else {
+      results.push({ connectionId: item.connectionId, success: false, error: `Unsupported type: ${conn.type}` });
+      if (!args.continueOnError) break;
+    }
+  }
+
+  return { results };
 });
 
 // Handle external links
