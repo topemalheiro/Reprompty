@@ -47,22 +47,24 @@ function Mascot() {
   const [frame, setFrame] = useState(0);
 
   useEffect(() => {
-    const timer = setInterval(() => setFrame((f) => (f + 1) % 4), 400);
+    const timer = setInterval(() => setFrame((f) => (f + 1) % 6), 350);
     return () => clearInterval(timer);
   }, []);
 
-  // Smoke rises: bottom disappears first, then middle, then top
+  // Smoke rises from bottom, then fades from bottom
   const smoke = [
-    [")", "(", ")"],  // all visible
+    [" ", " ", ")"],  // bottom appears
+    [" ", "(", ")"],  // middle appears
+    [")", "(", ")"],  // top appears (all visible)
     [")", "(", " "],  // bottom fades
-    [")", " ", " "],  // bottom+mid fade
-    [" ", " ", " "],  // all gone
+    [")", " ", " "],  // middle fades
+    [" ", " ", " "],  // top fades (all gone)
   ][frame];
 
   const art = [
-    `               ${smoke[0]}`,
-    `              ${smoke[1]}`,
-    `   (o)_(o)     ${smoke[2]}`,
+    `                ${smoke[0]}`,
+    `               ${smoke[1]}`,
+    `   (o)_(o)      ${smoke[2]}`,
     `  =( o_o )=   ~~*`,
     `   /  Y  \\-----'`,
     `  / /   \\ \\`,
