@@ -175,7 +175,7 @@ export async function sendViaCdp(
       2
     );
 
-    const value = enterResult?.result?.value;
+    const value = (enterResult as any)?.result?.result?.value;
     if (value === "sent") {
       return { success: true };
     }
