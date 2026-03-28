@@ -2,10 +2,11 @@ import {
   connectionManager,
   ConnectionType,
   ConnectionConfig,
-  Connection
+  VSCodeWindowConfig,
 } from "../core/connection-manager.js";
-import { getOrCreateIpcClient, RepromptyIpcClient } from "../core/ipc-client.js";
-import { spawnWindow, findWindowByTitle } from "../platform/windows.js";
+import { getOrCreateIpcClient } from "../core/ipc-client.js";
+import { spawnWindow, findWindowByTitle, listWindows, getCdpPort } from "../platform/windows.js";
+import { sendViaCdp, isCdpAvailable } from "../core/cdp-client.js";
 import { scriptManager } from "../core/script-manager.js";
 
 export interface MCPTool {
@@ -157,6 +158,22 @@ export const tools: MCPTool[] = [
       required: ["role"],
     },
   },
+  {
+    name: "detect_windows",
+    description: "Auto-detect all VS Code and Kilo Code windows with their PIDs, titles, and IPC pipe availability",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+  },
+  {
+    name: "check_cdp",
+    description: "Check if Chrome DevTools Protocol is available for Claude Code background sending",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+  },
 ];
 
 // Tool implementations
@@ -175,25 +192,49 @@ export async function callTool(
     case "send_prompt": {
       const connectionId = args.connectionId as string;
       const prompt = args.prompt as string;
-      
-      const connection = connectionManager.getConnection(connectionId);
+
+      // Allow lookup by name or ID
+      const connection =
+        connectionManager.getConnection(connectionId) ||
+        connectionManager.getConnectionByName(connectionId);
       if (!connection) {
-        return { content: [{ type: "text", text: `Error: Connection ${connectionId} not found` }] };
+        return { content: [{ type: "text", text: `Error: Connection "${connectionId}" not found` }] };
       }
 
-      // Get or create IPC client
-      const config = connection.config as { socketPath?: string; method?: string; windowTitle?: string };
-      const socketPath = config.socketPath || `\\\\.\\pipe\\kilo-ipc-${process.pid}`;
-      
-      const client = getOrCreateIpcClient(socketPath);
-      const success = client.sendMessage(prompt);
+      const cfg = connection.config as VSCodeWindowConfig;
 
-      if (success) {
-        connectionManager.updateConnectionStatus(connectionId, "active");
-        return { content: [{ type: "text", text: `Prompt sent to ${connection.name}` }] };
-      } else {
-        return { content: [{ type: "text", text: `Failed to send prompt to ${connection.name}` }] };
+      // Background IPC pipe (Kilo Code)
+      if (cfg.method === "background" && cfg.socketPath) {
+        try {
+          const client = getOrCreateIpcClient(cfg.socketPath);
+          const ready = await client.waitForReady();
+          if (!ready) {
+            connectionManager.updateConnectionStatus(connection.id, "error");
+            return { content: [{ type: "text", text: `Error: IPC not ready for ${connection.name} (timeout)` }] };
+          }
+          client.sendTaskMessage(prompt);
+          connectionManager.updateConnectionStatus(connection.id, "active");
+          return { content: [{ type: "text", text: `Sent to ${connection.name} via background IPC` }] };
+        } catch (err) {
+          connectionManager.updateConnectionStatus(connection.id, "error");
+          return { content: [{ type: "text", text: `Error sending to ${connection.name}: ${err}` }] };
+        }
       }
+
+      // CDP background (Claude Code)
+      if (cfg.extension === "claude-code") {
+        const port = getCdpPort();
+        if (port) {
+          const result = await sendViaCdp(port, prompt);
+          if (result.success) {
+            connectionManager.updateConnectionStatus(connection.id, "active");
+            return { content: [{ type: "text", text: `Sent to ${connection.name} via CDP (background)` }] };
+          }
+          // CDP failed, fall through to foreground
+        }
+      }
+
+      return { content: [{ type: "text", text: `No background method available for ${connection.name}. Use foreground from Reprompty UI.` }] };
     }
 
     case "add_connection": {
@@ -218,26 +259,47 @@ export async function callTool(
 
     case "daisy_chain": {
       const prompts = args.prompts as Array<{ connectionId: string; prompt: string }>;
-      const continueOnError = args.continueOnError as boolean || false;
-      
+      const continueOnError = (args.continueOnError as boolean) || false;
+
       const results: string[] = [];
-      
+
       for (const p of prompts) {
-        const connection = connectionManager.getConnection(p.connectionId);
+        const connection =
+          connectionManager.getConnection(p.connectionId) ||
+          connectionManager.getConnectionByName(p.connectionId);
         if (!connection) {
-          results.push(`Connection ${p.connectionId} not found`);
+          results.push(`Connection "${p.connectionId}" not found`);
           if (!continueOnError) break;
           continue;
         }
 
-        const config = connection.config as { socketPath?: string };
-        const socketPath = config.socketPath || `\\\\.\\pipe\\kilo-ipc-${process.pid}`;
-        const client = getOrCreateIpcClient(socketPath);
-        
-        const success = client.sendMessage(p.prompt);
-        results.push(success ? `Sent to ${connection.name}` : `Failed: ${connection.name}`);
-        
-        if (!success && !continueOnError) break;
+        const cfg = connection.config as VSCodeWindowConfig;
+        try {
+          if (cfg.method === "background" && cfg.socketPath) {
+            const client = getOrCreateIpcClient(cfg.socketPath);
+            const ready = await client.waitForReady();
+            if (!ready) throw new Error("IPC not ready");
+            client.sendTaskMessage(p.prompt);
+            results.push(`Sent to ${connection.name} (background)`);
+          } else if (cfg.extension === "claude-code") {
+            const port = getCdpPort();
+            if (port) {
+              const cdpResult = await sendViaCdp(port, p.prompt);
+              if (cdpResult.success) {
+                results.push(`Sent to ${connection.name} (CDP)`);
+              } else {
+                throw new Error(cdpResult.error || "CDP failed");
+              }
+            } else {
+              throw new Error("CDP port not available");
+            }
+          } else {
+            throw new Error("No background method available");
+          }
+        } catch (err) {
+          results.push(`Failed: ${connection.name} - ${err}`);
+          if (!continueOnError) break;
+        }
       }
 
       return { content: [{ type: "text", text: results.join("\n") }] };
@@ -276,6 +338,30 @@ export async function callTool(
       }
       const started = scriptManager.runScript(script.id);
       return { content: [{ type: "text", text: started ? `Applied ${role} layout: ${script.name}` : `Failed to apply layout` }] };
+    }
+
+    case "detect_windows": {
+      const windows = listWindows();
+      return { content: [{ type: "text", text: JSON.stringify(windows, null, 2) }] };
+    }
+
+    case "check_cdp": {
+      const port = getCdpPort();
+      if (!port) {
+        return { content: [{ type: "text", text: JSON.stringify({ available: false, reason: "DevToolsActivePort not found" }) }] };
+      }
+      const available = await isCdpAvailable(port);
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            available,
+            port,
+            claudeCodeWebview: available,
+            reason: available ? "Claude Code webview found" : "Claude Code webview not found among CDP targets",
+          }, null, 2),
+        }],
+      };
     }
 
     default:
