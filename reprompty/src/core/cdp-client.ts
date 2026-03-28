@@ -89,7 +89,7 @@ function cdpEvaluate(
       JSON.stringify({
         id,
         method: "Runtime.evaluate",
-        params: { expression, returnByValue: true, awaitPromise: true },
+        params: { expression, returnByValue: true },
       })
     );
   });
@@ -131,54 +131,51 @@ export async function sendViaCdp(
 
     const escapedMessage = JSON.stringify(message);
 
-    const result = await cdpEvaluate(
+    // First: inject text
+    await cdpEvaluate(
       ws,
       `
-      new Promise(function(resolve) {
+      (function() {
         var iframe = document.querySelector('iframe');
-        if (!iframe) { resolve('no_iframe'); return; }
-
+        if (!iframe) return 'no_iframe';
         var doc = iframe.contentDocument;
-        if (!doc) { resolve('no_contentDocument'); return; }
-
+        if (!doc) return 'no_contentDocument';
         var input = doc.querySelector('.messageInput_cKsPxg[contenteditable]');
-        if (!input) {
-          // Fallback selectors
-          input = doc.querySelector('[contenteditable="plaintext-only"][role="textbox"]');
-        }
-        if (!input) {
-          input = doc.querySelector('[role="textbox"][contenteditable]');
-        }
-        if (!input) { resolve('input_not_found'); return; }
-
-        // Focus and inject text
+        if (!input) input = doc.querySelector('[contenteditable="plaintext-only"][role="textbox"]');
+        if (!input) input = doc.querySelector('[role="textbox"][contenteditable]');
+        if (!input) return 'input_not_found';
         input.focus();
         input.textContent = ${escapedMessage};
-        input.dispatchEvent(new InputEvent('input', {
-          bubbles: true,
-          data: ${escapedMessage},
-          inputType: 'insertText'
-        }));
-
-        // Small delay then press Enter to submit
-        setTimeout(function() {
-          input.dispatchEvent(new KeyboardEvent('keydown', {
-            key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true
-          }));
-          input.dispatchEvent(new KeyboardEvent('keypress', {
-            key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true
-          }));
-          input.dispatchEvent(new KeyboardEvent('keyup', {
-            key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true
-          }));
-          resolve('sent');
-        }, 100);
-      })
+        input.dispatchEvent(new InputEvent('input', {bubbles:true, data:${escapedMessage}, inputType:'insertText'}));
+        return 'injected';
+      })()
       `,
       1
     );
 
-    const value = result?.result?.value;
+    // Small delay then press Enter
+    await new Promise((r) => setTimeout(r, 150));
+
+    const enterResult = await cdpEvaluate(
+      ws,
+      `
+      (function() {
+        var iframe = document.querySelector('iframe');
+        if (!iframe) return 'no_iframe';
+        var doc = iframe.contentDocument;
+        var input = doc.querySelector('.messageInput_cKsPxg[contenteditable]');
+        if (!input) input = doc.querySelector('[contenteditable="plaintext-only"][role="textbox"]');
+        if (!input) return 'no_input';
+        input.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true}));
+        input.dispatchEvent(new KeyboardEvent('keypress', {key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true}));
+        input.dispatchEvent(new KeyboardEvent('keyup', {key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true}));
+        return 'sent';
+      })()
+      `,
+      2
+    );
+
+    const value = enterResult?.result?.value;
     if (value === "sent") {
       return { success: true };
     }
