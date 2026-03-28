@@ -46,7 +46,7 @@ declare global {
 function App() {
   const [activeTab, setActiveTab] = useState<"windows" | "send" | "spawn" | "scripts">("windows");
   const [detectedWindows, setDetectedWindows] = useState<DetectedWindow[]>([]);
-  const [selectedWindowPid, setSelectedWindowPid] = useState<string>("");
+  const [selectedWindowHandle, setSelectedWindowHandle] = useState<string>("");
   const [promptText, setPromptText] = useState("");
   const [status, setStatus] = useState("");
   const [folderPath, setFolderPath] = useState("");
@@ -58,11 +58,11 @@ function App() {
   }, []);
 
   const sendPrompt = async () => {
-    if (!selectedWindowPid || !promptText) {
+    if (!selectedWindowHandle || !promptText) {
       setStatus("Select a window and enter a prompt");
       return;
     }
-    const win = detectedWindows.find((w) => String(w.pid) === selectedWindowPid);
+    const win = detectedWindows.find((w) => String(w.handle) === selectedWindowHandle);
     if (!win) {
       setStatus("Window not found — it may have closed");
       return;
@@ -70,7 +70,7 @@ function App() {
     try {
       setStatus("Sending...");
       const result = await window.electronAPI.sendToDetected({ window: win, prompt: promptText });
-      setStatus(result.success ? `Sent via ${result.method}` : `Failed: ${result.error}`);
+      setStatus(result.success ? `Sent via ${result.method}` : `Failed: ${result.error || "all send methods failed"}`);
       if (result.success) setPromptText("");
     } catch (err) {
       setStatus(`Error: ${err}`);
@@ -86,6 +86,17 @@ function App() {
     } catch (err) {
       setStatus(`Error: ${err}`);
     }
+  };
+
+  // Format title: "active-file - ProjectFolder - Visual Studio Code" → "ProjectFolder — active-file"
+  const formatTitle = (win: DetectedWindow) => {
+    const parts = win.title.replace(/ - Visual Studio Code.*$/, "").replace(/ - Kilo Code.*$/, "").split(" - ");
+    if (parts.length >= 2) {
+      const file = parts[0].trim();
+      const folder = parts.slice(1).join(" - ").trim();
+      return `${folder} — ${file}`;
+    }
+    return win.folderPath || win.title;
   };
 
   const extBadge = (ext: string) => {
@@ -127,9 +138,9 @@ function App() {
                 const ext = extBadge(win.extension);
                 const meth = methBadge(win.sendMethod);
                 return (
-                  <div key={win.pid} style={s.card}>
+                  <div key={win.handle} style={s.card}>
                     <div style={{ flex: 1 }}>
-                      <strong style={{ color: "#fff" }}>{win.folderPath || win.title}</strong>
+                      <strong style={{ color: "#fff" }}>{formatTitle(win)}</strong>
                       <div style={{ display: "flex", gap: 6, marginTop: 4, alignItems: "center" }}>
                         <span style={{ ...s.badge, background: ext.bg }}>{ext.label}</span>
                         <span style={{ ...s.badge, background: meth.bg }}>{meth.label}</span>
@@ -149,14 +160,14 @@ function App() {
           <div style={s.panel}>
             <h2 style={s.panelTitle}>Send Prompt</h2>
 
-            <select style={s.select} value={selectedWindowPid} onChange={(e) => setSelectedWindowPid(e.target.value)}>
+            <select style={s.select} value={selectedWindowHandle} onChange={(e) => setSelectedWindowHandle(e.target.value)}>
               <option value="">Select a window...</option>
               {detectedWindows.map((win) => {
                 const ext = win.extension === "kilo-code" ? "Kilo" : win.extension === "claude-code" ? "Claude" : "?";
                 const meth = win.sendMethod === "background" ? "BG" : "FG";
                 return (
-                  <option key={win.pid} value={String(win.pid)}>
-                    {win.folderPath || win.title} ({ext}) [{meth}]
+                  <option key={win.handle} value={String(win.handle)}>
+                    {formatTitle(win)} ({ext}) [{meth}]
                   </option>
                 );
               })}
