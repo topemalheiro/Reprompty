@@ -370,7 +370,7 @@ electron.ipcMain.handle("send-to-detected", async (_event: any, args: { window: 
         dbg("Importing cdp-client...");
         const { sendViaCdp } = await import("../core/cdp-client.js");
         dbg("sendViaCdp imported, calling...");
-        const result = await sendViaCdp(port, prompt);
+        const result = await sendViaCdp(port, prompt, win.title);
         dbg(`CDP result: ${JSON.stringify(result)}`);
         if (result.success) {
           return { success: true, method: "background-cdp" };
