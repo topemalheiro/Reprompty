@@ -380,6 +380,59 @@ electron.ipcMain.handle("detect-windows", async () => {
   }
 });
 
+// ============================================================================
+// SEND TO DETECTED WINDOW (no persistent connection needed)
+// ============================================================================
+
+electron.ipcMain.handle("send-to-detected", async (_event: any, args: { window: any; prompt: string }) => {
+  const win = args.window;
+  const prompt = args.prompt;
+
+  // Try background IPC pipe (Kilo Code)
+  if (win.pipePath) {
+    try {
+      const client = getOrCreateIpcClient(win.pipePath);
+      const ready = await client.waitForReady();
+      if (ready) {
+        client.sendTaskMessage(prompt);
+        return { success: true, method: "background-ipc" };
+      }
+    } catch (err) {
+      console.error("[send-to-detected] IPC failed:", err);
+    }
+  }
+
+  // Try CDP (Claude Code)
+  if (win.extension === "claude-code" || !win.pipePath) {
+    try {
+      const { getCdpPort } = await import("../platform/windows.js");
+      const { sendViaCdp } = await import("../core/cdp-client.js");
+      const port = getCdpPort();
+      if (port) {
+        const result = await sendViaCdp(port, prompt);
+        if (result.success) {
+          return { success: true, method: "background-cdp" };
+        }
+      }
+    } catch (err) {
+      console.error("[send-to-detected] CDP failed:", err);
+    }
+  }
+
+  // Fallback to foreground
+  if (win.handle) {
+    try {
+      const { sendMessageForeground } = await import("../platform/windows.js");
+      const sent = await sendMessageForeground(win.handle, prompt);
+      return { success: sent, method: "foreground" };
+    } catch (err) {
+      console.error("[send-to-detected] Foreground failed:", err);
+    }
+  }
+
+  return { success: false, error: "No send method available" };
+});
+
 electron.ipcMain.handle("spawn-window", async (_event: any, args: { folderPath: string; windowName?: string }) => {
   try {
     const { spawnWindow } = await import("../platform/windows.js");

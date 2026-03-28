@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   listConnections: () => ipcRenderer.invoke("list-connections"),
   removeConnection: (args: unknown) => ipcRenderer.invoke("remove-connection", args),
   daisyChain: (args: unknown) => ipcRenderer.invoke("daisy-chain", args),
+  sendToDetected: (args: { window: unknown; prompt: string }) => ipcRenderer.invoke("send-to-detected", args),
 
   // Window detection
   detectWindows: () => ipcRenderer.invoke("detect-windows"),
