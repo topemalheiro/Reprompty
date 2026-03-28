@@ -41,13 +41,49 @@ async function getCdpTargets(port: number): Promise<CdpTarget[]> {
   });
 }
 
-function findClaudeCodeTarget(targets: CdpTarget[]): CdpTarget | null {
-  const patterns = [
+function findClaudeCodeTarget(targets: CdpTarget[], windowTitle?: string): CdpTarget | null {
+  const claudePatterns = [
     "extensionId=Anthropic.claude-code",
     "extensionId=anthropic.claude-code",
   ];
 
-  for (const pattern of patterns) {
+  // If we have a window title, find the matching page target first,
+  // then get the Claude webview iframe that follows it
+  if (windowTitle) {
+    for (let i = 0; i < targets.length; i++) {
+      const t = targets[i];
+      if (t.type === "page" && t.title && windowTitle.includes(t.title.split(" - ").slice(-2).join(" - ").replace(" - Visual Studio Code", "").trim())) {
+        // Found the page, look for Claude iframe after it
+        for (let j = i + 1; j < targets.length; j++) {
+          if (targets[j].type === "page") break; // hit next page, stop
+          for (const pattern of claudePatterns) {
+            if (targets[j].type === "iframe" && targets[j].url?.includes(pattern)) {
+              return targets[j];
+            }
+          }
+        }
+      }
+    }
+
+    // Try matching by folder name in the page title
+    const folderMatch = windowTitle.match(/^(.+?)\s+-\s+(Visual Studio Code|Kilo Code)/);
+    const folder = folderMatch ? folderMatch[1].trim() : windowTitle;
+    for (let i = 0; i < targets.length; i++) {
+      if (targets[i].type === "page" && targets[i].title?.includes(folder)) {
+        for (let j = i + 1; j < targets.length; j++) {
+          if (targets[j].type === "page") break;
+          for (const pattern of claudePatterns) {
+            if (targets[j].type === "iframe" && targets[j].url?.includes(pattern)) {
+              return targets[j];
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Fallback: first Claude webview found
+  for (const pattern of claudePatterns) {
     const target = targets.find(
       (t) => t.type === "iframe" && t.url?.includes(pattern)
     );
@@ -102,13 +138,14 @@ function cdpEvaluate(
  */
 export async function sendViaCdp(
   port: number,
-  message: string
+  message: string,
+  windowTitle?: string
 ): Promise<{ success: boolean; error?: string }> {
   let ws: InstanceType<typeof WS> | null = null;
 
   try {
     const targets = await getCdpTargets(port);
-    const target = findClaudeCodeTarget(targets);
+    const target = findClaudeCodeTarget(targets, windowTitle);
     if (!target) {
       return { success: false, error: "Claude Code webview not found" };
     }
