@@ -51,17 +51,18 @@ function Mascot() {
     return () => clearInterval(timer);
   }, []);
 
+  // Smoke rises: bottom disappears first, then middle, then top
   const smoke = [
     [")", "(", ")"],  // all visible
-    [" ", "(", ")"],  // top fades
-    [" ", " ", ")"],  // top+mid fade
+    [")", "(", " "],  // bottom fades
+    [")", " ", " "],  // bottom+mid fade
     [" ", " ", " "],  // all gone
   ][frame];
 
   const art = [
-    `             ${smoke[0]}`,
-    `            ${smoke[1]}`,
-    `   (o)_(o)   ${smoke[2]}`,
+    `               ${smoke[0]}`,
+    `              ${smoke[1]}`,
+    `   (o)_(o)     ${smoke[2]}`,
     `  =( o_o )=   ~~*`,
     `   /  Y  \\-----'`,
     `  / /   \\ \\`,
@@ -72,7 +73,7 @@ function Mascot() {
   ].join("\n");
 
   return (
-    <pre style={{ margin: 0, fontFamily: "monospace", fontSize: "11px", lineHeight: "1.15", color: "#666", position: "absolute", right: 20, top: 8, userSelect: "none" }}>
+    <pre style={{ margin: 0, fontFamily: "Consolas, 'Courier New', monospace", fontSize: "12px", lineHeight: "1.2", color: "#666", position: "absolute", right: 20, top: 6, userSelect: "none" }}>
       {art}
     </pre>
   );
