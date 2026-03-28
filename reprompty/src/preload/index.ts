@@ -9,6 +9,15 @@ contextBridge.exposeInMainWorld("electronAPI", {
   removeConnection: (args: unknown) => ipcRenderer.invoke("remove-connection", args),
   daisyChain: (args: unknown) => ipcRenderer.invoke("daisy-chain", args),
 
+  // Window detection
+  detectWindows: () => ipcRenderer.invoke("detect-windows"),
+  onWindowsDetected: (callback: (windows: unknown[]) => void) => {
+    ipcRenderer.on("windows-detected", (_event, windows) => callback(windows));
+  },
+  removeWindowListeners: () => {
+    ipcRenderer.removeAllListeners("windows-detected");
+  },
+
   // Script management
   listScripts: () => ipcRenderer.invoke("scripts-list"),
   addScript: (args: unknown) => ipcRenderer.invoke("scripts-add", args),
