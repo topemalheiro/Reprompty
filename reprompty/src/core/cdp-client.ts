@@ -1,11 +1,15 @@
 import http from "node:http";
+import WebSocketLib from "ws";
 
-// Use globalThis.WebSocket which is available in Electron's main process (Node 22+)
-// Falls back to a minimal raw socket implementation if needed
-const WS = globalThis.WebSocket;
+const WS = WebSocketLib;
 
 // ============================================================================
 // CDP Client - Send messages to Claude Code via Chrome DevTools Protocol
+//
+// The Claude Code extension's chat input lives inside a nested iframe:
+//   webview target → iframe.contentDocument → .messageInput_cKsPxg[contenteditable]
+//
+// We inject text + dispatch Enter key to submit. Zero focus stealing.
 // ============================================================================
 
 interface CdpTarget {
@@ -16,9 +20,6 @@ interface CdpTarget {
   webSocketDebuggerUrl: string;
 }
 
-/**
- * Fetch all CDP targets from VS Code's debug port
- */
 async function getCdpTargets(port: number): Promise<CdpTarget[]> {
   return new Promise((resolve, reject) => {
     const req = http.get(`http://127.0.0.1:${port}/json`, (res) => {
@@ -40,37 +41,22 @@ async function getCdpTargets(port: number): Promise<CdpTarget[]> {
   });
 }
 
-/**
- * Find the Claude Code webview target among CDP targets
- */
 function findClaudeCodeTarget(targets: CdpTarget[]): CdpTarget | null {
-  // Claude Code extension ID in the webview URL
-  const claudePatterns = [
+  const patterns = [
     "extensionId=Anthropic.claude-code",
     "extensionId=anthropic.claude-code",
-    "claude-code",
   ];
 
-  // Prefer iframe type (the actual webview content)
-  for (const pattern of claudePatterns) {
-    const iframe = targets.find(
+  for (const pattern of patterns) {
+    const target = targets.find(
       (t) => t.type === "iframe" && t.url?.includes(pattern)
     );
-    if (iframe) return iframe;
-  }
-
-  // Fall back to any matching target
-  for (const pattern of claudePatterns) {
-    const any = targets.find((t) => t.url?.includes(pattern));
-    if (any) return any;
+    if (target) return target;
   }
 
   return null;
 }
 
-/**
- * Send a CDP Runtime.evaluate command via WebSocket
- */
 function cdpEvaluate(
   ws: InstanceType<typeof WS>,
   expression: string,
@@ -79,15 +65,14 @@ function cdpEvaluate(
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       reject(new Error("CDP evaluate timed out"));
-    }, 5000);
+    }, 8000);
 
-    const handler = (event: MessageEvent | { data: string }) => {
+    const handler = (data: Buffer | string) => {
       try {
-        const raw = typeof event === "object" && "data" in event ? event.data : String(event);
-        const msg = JSON.parse(String(raw));
+        const msg = JSON.parse(data.toString());
         if (msg.id === id) {
           clearTimeout(timeout);
-          ws.removeEventListener("message", handler as EventListener);
+          ws.off("message", handler);
           if (msg.error) {
             reject(new Error(msg.error.message));
           } else {
@@ -95,19 +80,16 @@ function cdpEvaluate(
           }
         }
       } catch {
-        // Not our message, ignore
+        // Not our message
       }
     };
 
-    ws.addEventListener("message", handler as EventListener);
+    ws.on("message", handler);
     ws.send(
       JSON.stringify({
         id,
         method: "Runtime.evaluate",
-        params: {
-          expression,
-          returnByValue: true,
-        },
+        params: { expression, returnByValue: true, awaitPromise: true },
       })
     );
   });
@@ -116,11 +98,7 @@ function cdpEvaluate(
 /**
  * Send a message to Claude Code via CDP (background, no focus stealing).
  *
- * Flow:
- * 1. GET http://127.0.0.1:{port}/json to list all CDP targets
- * 2. Find the Claude Code webview iframe
- * 3. Connect via WebSocket to the target's debug URL
- * 4. Use Runtime.evaluate to find the input element and inject text + submit
+ * Path: webview target → iframe.contentDocument → .messageInput_cKsPxg → inject text → Enter
  */
 export async function sendViaCdp(
   port: number,
@@ -129,80 +107,73 @@ export async function sendViaCdp(
   let ws: InstanceType<typeof WS> | null = null;
 
   try {
-    // 1. Get targets
     const targets = await getCdpTargets(port);
-
-    // 2. Find Claude Code webview
     const target = findClaudeCodeTarget(targets);
     if (!target) {
-      return {
-        success: false,
-        error: "Claude Code webview not found among CDP targets",
-      };
+      return { success: false, error: "Claude Code webview not found" };
     }
 
-    // 3. Connect via WebSocket
     ws = new WS(target.webSocketDebuggerUrl);
     await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error("WS connect timeout")), 3000);
-      ws!.addEventListener("open", () => {
+      const timeout = setTimeout(
+        () => reject(new Error("WS connect timeout")),
+        3000
+      );
+      ws!.on("open", () => {
         clearTimeout(timeout);
         resolve();
       });
-      ws!.addEventListener("error", () => {
+      ws!.on("error", () => {
         clearTimeout(timeout);
         reject(new Error("WebSocket connection error"));
       });
     });
 
-    // 4. Inject text into the chat input and submit
     const escapedMessage = JSON.stringify(message);
+
     const result = await cdpEvaluate(
       ws,
       `
-      (function() {
-        // Find textarea or contenteditable input
-        var input = document.querySelector('textarea');
-        if (!input) input = document.querySelector('[contenteditable="true"]');
-        if (!input) input = document.querySelector('input[type="text"]');
-        if (!input) return 'input_not_found';
+      new Promise(function(resolve) {
+        var iframe = document.querySelector('iframe');
+        if (!iframe) { resolve('no_iframe'); return; }
 
-        if (input.tagName === 'TEXTAREA' || input.tagName === 'INPUT') {
-          // Use native setter to trigger React's onChange
-          var nativeSet = Object.getOwnPropertyDescriptor(
-            window.HTMLTextAreaElement.prototype, 'value'
-          );
-          if (!nativeSet && input.tagName === 'INPUT') {
-            nativeSet = Object.getOwnPropertyDescriptor(
-              window.HTMLInputElement.prototype, 'value'
-            );
-          }
-          if (nativeSet && nativeSet.set) {
-            nativeSet.set.call(input, ${escapedMessage});
-          } else {
-            input.value = ${escapedMessage};
-          }
-          input.dispatchEvent(new Event('input', { bubbles: true }));
-          input.dispatchEvent(new Event('change', { bubbles: true }));
+        var doc = iframe.contentDocument;
+        if (!doc) { resolve('no_contentDocument'); return; }
 
-          // Submit via Enter
+        var input = doc.querySelector('.messageInput_cKsPxg[contenteditable]');
+        if (!input) {
+          // Fallback selectors
+          input = doc.querySelector('[contenteditable="plaintext-only"][role="textbox"]');
+        }
+        if (!input) {
+          input = doc.querySelector('[role="textbox"][contenteditable]');
+        }
+        if (!input) { resolve('input_not_found'); return; }
+
+        // Focus and inject text
+        input.focus();
+        input.textContent = ${escapedMessage};
+        input.dispatchEvent(new InputEvent('input', {
+          bubbles: true,
+          data: ${escapedMessage},
+          inputType: 'insertText'
+        }));
+
+        // Small delay then press Enter to submit
+        setTimeout(function() {
           input.dispatchEvent(new KeyboardEvent('keydown', {
+            key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true
+          }));
+          input.dispatchEvent(new KeyboardEvent('keypress', {
             key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true
           }));
           input.dispatchEvent(new KeyboardEvent('keyup', {
             key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true
           }));
-          return 'sent';
-        } else {
-          // contenteditable
-          input.textContent = ${escapedMessage};
-          input.dispatchEvent(new Event('input', { bubbles: true }));
-          input.dispatchEvent(new KeyboardEvent('keydown', {
-            key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true
-          }));
-          return 'sent';
-        }
-      })()
+          resolve('sent');
+        }, 100);
+      })
       `,
       1
     );
@@ -222,7 +193,7 @@ export async function sendViaCdp(
       error: err instanceof Error ? err.message : String(err),
     };
   } finally {
-    if (ws && ws.readyState === WS.OPEN) {
+    if (ws && ws.readyState === WebSocketLib.OPEN) {
       ws.close();
     }
   }

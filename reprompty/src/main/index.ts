@@ -388,6 +388,13 @@ electron.ipcMain.handle("send-to-detected", async (_event: any, args: { window: 
   const win = args.window;
   const prompt = args.prompt;
 
+  // Direct file logging (bypasses console wrapper which may be broken)
+  const dbg = (msg: string) => {
+    try { fs.appendFileSync(nodePath.join(process.env.USERPROFILE || ".", "reprompty-cdp-debug.log"), `${new Date().toISOString()} ${msg}\n`); } catch {}
+  };
+
+  dbg(`send-to-detected called: extension=${win.extension} pipePath=${win.pipePath} handle=${win.handle}`);
+
   // Try background IPC pipe (Kilo Code)
   if (win.pipePath) {
     try {
@@ -405,17 +412,25 @@ electron.ipcMain.handle("send-to-detected", async (_event: any, args: { window: 
   // Try CDP (Claude Code)
   if (win.extension === "claude-code" || !win.pipePath) {
     try {
+      dbg("Trying CDP...");
       const { getCdpPort } = await import("../platform/windows.js");
-      const { sendViaCdp } = await import("../core/cdp-client.js");
       const port = getCdpPort();
+      dbg(`CDP port: ${port}`);
       if (port) {
+        dbg("Importing cdp-client...");
+        const { sendViaCdp } = await import("../core/cdp-client.js");
+        dbg("sendViaCdp imported, calling...");
         const result = await sendViaCdp(port, prompt);
+        dbg(`CDP result: ${JSON.stringify(result)}`);
         if (result.success) {
           return { success: true, method: "background-cdp" };
         }
+        dbg("CDP send returned failure, falling through");
+      } else {
+        dbg("No CDP port available");
       }
     } catch (err) {
-      console.error("[send-to-detected] CDP failed:", err);
+      dbg(`CDP error: ${err instanceof Error ? err.stack : String(err)}`);
     }
   }
 

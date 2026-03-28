@@ -156,60 +156,65 @@ export async function sendMessageForeground(
   message: string
 ): Promise<boolean> {
   try {
-    // Write message to a temp file to avoid quoting issues
     const tempDir = process.env.TEMP || process.env.TMP || ".";
-    const tempFile = nodePath.join(tempDir, `reprompty-msg-${Date.now()}.txt`);
-    fs.writeFileSync(tempFile, message, "utf-8");
+    const msgFile = nodePath.join(tempDir, `reprompty-msg-${Date.now()}.txt`);
+    const ps1File = nodePath.join(tempDir, `reprompty-send-${Date.now()}.ps1`);
+    fs.writeFileSync(msgFile, message, "utf-8");
 
     const script = `
-      $Handle = ${windowHandle}
-      $MessageFile = '${tempFile.replace(/'/g, "''")}'
-      $Message = Get-Content -Path $MessageFile -Raw -Encoding UTF8
-      Remove-Item -Path $MessageFile -Force -ErrorAction SilentlyContinue
+$Handle = ${windowHandle}
+$MessageFile = '${msgFile.replace(/\\/g, "\\\\").replace(/'/g, "''")}'
+$Message = Get-Content -Path $MessageFile -Raw -Encoding UTF8
+Remove-Item -Path $MessageFile -Force -ErrorAction SilentlyContinue
 
-      Add-Type @"
-        using System;
-        using System.Runtime.InteropServices;
-        public class Win32Send {
-          [DllImport("user32.dll")]
-          public static extern bool SetForegroundWindow(IntPtr hWnd);
-          [DllImport("user32.dll")]
-          public static extern IntPtr GetForegroundWindow();
-          [DllImport("user32.dll")]
-          public static extern bool IsWindow(IntPtr hWnd);
-        }
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class Win32Send {
+  [DllImport("user32.dll")]
+  public static extern bool SetForegroundWindow(IntPtr hWnd);
+  [DllImport("user32.dll")]
+  public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")]
+  public static extern bool IsWindow(IntPtr hWnd);
+}
 "@
 
-      if (-not [Win32Send]::IsWindow([IntPtr]$Handle)) {
-        Write-Error "Invalid window handle"
-        exit 1
-      }
+if (-not [Win32Send]::IsWindow([IntPtr]$Handle)) {
+  Write-Error "Invalid window handle"
+  exit 1
+}
 
-      $original = [Win32Send]::GetForegroundWindow()
-      Set-Clipboard -Value $Message
-      [Win32Send]::SetForegroundWindow([IntPtr]$Handle) | Out-Null
-      Start-Sleep -Milliseconds 150
+$original = [Win32Send]::GetForegroundWindow()
+Set-Clipboard -Value $Message
+[Win32Send]::SetForegroundWindow([IntPtr]$Handle) | Out-Null
+Start-Sleep -Milliseconds 150
 
-      Add-Type -AssemblyName System.Windows.Forms
-      [System.Windows.Forms.SendKeys]::SendWait("^v")
-      Start-Sleep -Milliseconds 100
-      [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
-      Start-Sleep -Milliseconds 50
+Add-Type -AssemblyName System.Windows.Forms
+[System.Windows.Forms.SendKeys]::SendWait("^v")
+Start-Sleep -Milliseconds 100
+[System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
+Start-Sleep -Milliseconds 50
 
-      if ($original -ne [IntPtr]::Zero -and $original -ne [IntPtr]$Handle) {
-        Start-Sleep -Milliseconds 100
-        [Win32Send]::SetForegroundWindow($original) | Out-Null
-      }
+if ($original -ne [IntPtr]::Zero -and $original -ne [IntPtr]$Handle) {
+  Start-Sleep -Milliseconds 100
+  [Win32Send]::SetForegroundWindow($original) | Out-Null
+}
 
-      Write-Output "sent"
-    `;
+Write-Output "sent"
+`;
+
+    fs.writeFileSync(ps1File, script, "utf-8");
 
     const result = execSync(
-      `powershell -NoProfile -ExecutionPolicy Bypass -Command "${script.replace(/"/g, '\\"').replace(/\n/g, " ")}"`,
+      `powershell -NoProfile -ExecutionPolicy Bypass -File "${ps1File}"`,
       { encoding: "utf-8", timeout: 10000 }
     ).trim();
 
-    return result === "sent";
+    // Clean up ps1 file
+    try { fs.unlinkSync(ps1File); } catch { /* ignore */ }
+
+    return result.includes("sent");
   } catch (err) {
     console.error("[sendMessageForeground] Error:", err);
     return false;
@@ -329,8 +334,11 @@ $results | ForEach-Object { Write-Output $_ }
         ? "kilo-code"
         : "claude-code";
 
+      // CDP is available for Claude Code windows (checked once, cached)
+      const cdpAvailable = !pipeExists && getCdpPort() !== null;
+
       const sendMethod: DetectedWindow["sendMethod"] =
-        pipeExists ? "background" : "foreground";
+        pipeExists || cdpAvailable ? "background" : "foreground";
 
       results.push({
         pid,

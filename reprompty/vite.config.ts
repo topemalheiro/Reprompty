@@ -21,6 +21,9 @@ export default defineConfig({
             rollupOptions: {
               external: [
                 "electron",
+                "ws",
+                "bufferutil",
+                "utf-8-validate",
               ],
             },
           },
