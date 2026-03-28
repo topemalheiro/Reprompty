@@ -104,10 +104,14 @@ function createWindow() {
   console.log("[Main] isDev:", isDev);
   console.log("[Main] app.isPackaged:", electron.app.isPackaged);
   
+  // Mouse mascot icon for taskbar
+  const mouseIcon = electron.nativeImage.createFromDataURL("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAo0lEQVR4nO1VQQ7AIAjz/2/0L9udSYsdsmShybIIFhoRHKOBMOf1+E5wYCBme8sJB2I+hQMF7PoVTmjzqpZMQJQjqy05gU/vgEcq6wJLtjVd2ZEvHZ6AI8m8xIo/LXlEQKoI73KxtSSC1df+rQB2UaV2RAnZOuUUPDtqQRZrS0zEHt0nCWDBU0cwSpTpk0REX8GSYbQSUDKSUSeUvAeNRuNvuAGWDeYFCd9ApQAAAABJRU5ErkJggg==");
+
   mainWindow = new electron.BrowserWindow({
     width: 900,
     height: 700,
     title: "Reprompty",
+    icon: mouseIcon,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -172,8 +176,8 @@ function createTray() {
   // If no icon loaded, use fallback base64
   if (!icon || icon.isEmpty()) {
     console.log("[Tray] Using fallback base64 icon");
-    // Fallback: 32x32 cyan triangle icon (known working)
-    const iconDataUrl = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAhElEQVRYR+2WMQ6AIAwD+/+P1oGBsVBsbLTc1EtLiJDi7kJb0iHJt7NJ+vLpBwDwLwCA/xIAgH8BAPyXAMD/CgDgvwQA4F8AAP8lAAD/IQAA/yEAAP8hAAD/IQAA/yEAAP8hAAD/IQAA/yEAAP8hAAD/IQAA/yEAAP8hAAD/IQAA/yEAAP8hAAD/IQAA/yEAAP8hAAD/IQAA/yEAAP8hAAD/IQAA/yEAAP8hAAD/IQAA/yEAAP8hAAD/IQAA/yEAAP8hAAD/IQAA/yEAAP8hAAD/IQAA/yEAAP8hAAD/IXoA7wABVQJYpgAAAABJRU5ErkJggg==";
+    // Fallback: 32x32 mouse mascot icon (cyan)
+    const iconDataUrl = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAo0lEQVR4nO1VQQ7AIAjz/2/0L9udSYsdsmShybIIFhoRHKOBMOf1+E5wYCBme8sJB2I+hQMF7PoVTmjzqpZMQJQjqy05gU/vgEcq6wJLtjVd2ZEvHZ6AI8m8xIo/LXlEQKoI73KxtSSC1df+rQB2UaV2RAnZOuUUPDtqQRZrS0zEHt0nCWDBU0cwSpTpk0REX8GSYbQSUDKSUSeUvAeNRuNvuAGWDeYFCd9ApQAAAABJRU5ErkJggg==";
     
     try {
       icon = electron.nativeImage.createFromDataURL(iconDataUrl);
