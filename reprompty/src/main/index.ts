@@ -313,6 +313,56 @@ electron.ipcMain.handle("remove-connection", async (_event: any, id: string) => 
 });
 
 // ============================================================================
+// SEND PROMPT IPC HANDLER
+// ============================================================================
+
+electron.ipcMain.handle("send-prompt", async (_event: any, args: { connectionId: string; prompt: string }) => {
+  const conn = connectionManager.getConnection(args.connectionId);
+  if (!conn) {
+    return { success: false, error: "Connection not found" };
+  }
+
+  if (conn.type === "vscode-window") {
+    const cfg = conn.config as VSCodeWindowConfig;
+
+    // Background send via IPC pipe (Kilo Code)
+    if (cfg.method === "background" && cfg.socketPath) {
+      try {
+        const client = getOrCreateIpcClient(cfg.socketPath);
+        const ready = await client.waitForReady();
+        if (!ready) {
+          connectionManager.updateConnectionStatus(conn.id, "error");
+          return { success: false, error: "IPC client not ready (timeout)" };
+        }
+        client.sendTaskMessage(args.prompt);
+        connectionManager.updateConnectionStatus(conn.id, "active");
+        return { success: true, method: "background-ipc" };
+      } catch (err) {
+        connectionManager.updateConnectionStatus(conn.id, "error");
+        return { success: false, error: String(err) };
+      }
+    }
+
+    // Foreground send fallback (clipboard + SendKeys)
+    if (cfg.windowHandle) {
+      try {
+        const { sendMessageForeground } = await import("../platform/windows.js");
+        const sent = await sendMessageForeground(cfg.windowHandle, args.prompt);
+        connectionManager.updateConnectionStatus(conn.id, sent ? "active" : "error");
+        return { success: sent, method: "foreground" };
+      } catch (err) {
+        connectionManager.updateConnectionStatus(conn.id, "error");
+        return { success: false, error: String(err) };
+      }
+    }
+
+    return { success: false, error: "No socketPath or windowHandle configured" };
+  }
+
+  return { success: false, error: `Unsupported connection type: ${conn.type}` };
+});
+
+// ============================================================================
 // SPAWN WINDOW IPC HANDLER
 // ============================================================================
 

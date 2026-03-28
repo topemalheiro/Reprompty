@@ -70,7 +70,7 @@ function App() {
     try {
       setStatus("Sending...");
       const result = await window.electronAPI.sendToDetected({ window: win, prompt: promptText });
-      setStatus(result.success ? `Sent via ${result.method || "background"}` : `Failed: ${result.error || "all send methods failed"}`);
+      setStatus(result.success ? "Sent successfully" : `Failed: ${result.error || "send failed"}`);
       if (result.success) setPromptText("");
     } catch (err) {
       setStatus(`Error: ${err}`);
