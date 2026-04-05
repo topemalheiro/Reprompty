@@ -1,4 +1,4 @@
-import { spawn, execSync } from "node:child_process";
+import { execSync } from "node:child_process";
 import fs from "node:fs";
 import nodePath from "node:path";
 
@@ -6,41 +6,101 @@ export interface WindowInfo {
   pid: number;
   title: string;
   socketPath: string;
+  processName?: string;
+}
+
+const VS_CODE_PROCESS_NAMES = new Set(["code", "code.real"]);
+const KILO_CODE_PROCESS_NAMES = new Set(["kilocode"]);
+const SUPPORTED_EDITOR_PROCESS_NAMES = new Set([
+  ...VS_CODE_PROCESS_NAMES,
+  ...KILO_CODE_PROCESS_NAMES,
+]);
+
+function getWritableTempDir(): string {
+  const windowsRoot = process.env.SystemRoot || "C:\\Windows";
+  const windowsTemp = nodePath.join(windowsRoot, "Temp").toLowerCase();
+  const candidates = [
+    process.env.LOCALAPPDATA ? nodePath.join(process.env.LOCALAPPDATA, "Temp") : undefined,
+    process.env.USERPROFILE ? nodePath.join(process.env.USERPROFILE, "AppData", "Local", "Temp") : undefined,
+    process.env.TEMP,
+    process.env.TMP,
+    ".",
+  ].filter((value): value is string => Boolean(value));
+
+  for (const dir of candidates) {
+    try {
+      if (dir.toLowerCase() === windowsTemp) {
+        continue;
+      }
+      fs.mkdirSync(dir, { recursive: true });
+      fs.accessSync(dir, fs.constants.W_OK);
+      return dir;
+    } catch {
+      // Try next candidate
+    }
+  }
+
+  return ".";
+}
+
+export function normalizeEditorProcessName(name?: string | null): string {
+  return (name ?? "").trim().replace(/\.exe$/i, "").toLowerCase();
+}
+
+export function isSupportedEditorProcessName(name?: string | null): boolean {
+  const normalizedName = normalizeEditorProcessName(name);
+  return SUPPORTED_EDITOR_PROCESS_NAMES.has(normalizedName);
+}
+
+export function fallbackProcessNameFromTitle(title: string): string {
+  return title.includes("Kilo Code") ? "kilocode" : "Code";
+}
+
+export function resolveDetectedWindowProcessName(
+  processName: string | null | undefined,
+  title: string
+): string {
+  const trimmedProcessName = (processName ?? "").trim();
+  return trimmedProcessName || fallbackProcessNameFromTitle(title);
 }
 
 /**
  * Spawn a new VS Code window using the CLI
  */
-export async function spawnWindow(
+export function spawnWindow(
   folderPath: string,
-  windowName?: string
+  _windowName?: string
 ): Promise<{ success: boolean; pid?: number; message: string }> {
-  try {
-    // Use VS Code CLI to open a new window
-    const args = ["--folder-uri", folderPath];
-    
-    if (windowName) {
-      // Try to set window title (not directly supported, but we can try)
+  return new Promise((resolve) => {
+    try {
+      const codePath = nodePath.join(
+        process.env.LOCALAPPDATA || "",
+        "Programs",
+        "Microsoft VS Code",
+        "bin",
+        "code.cmd"
+      );
+
+      if (!fs.existsSync(codePath)) {
+        resolve({ success: false, message: `code.cmd not found at: ${codePath}` });
+        return;
+      }
+
+      const result = execSync(
+        `powershell.exe -NoProfile -Command "& '${codePath}' --remote-debugging-port=9222 -n '${folderPath}'"`,
+        { encoding: "utf-8", timeout: 15000, stdio: ["pipe", "pipe", "pipe"] }
+      ).trim();
+
+      resolve({
+        success: true,
+        message: `Spawned VS Code window for ${folderPath}${result ? ` (${result})` : ""}`,
+      });
+    } catch (error: any) {
+      const stderr = error.stderr ? String(error.stderr).trim() : "";
+      const msg = stderr || error.message || String(error);
+      resolve({ success: false, message: `Failed to spawn window: ${msg}` });
     }
-
-    const proc = spawn("code", args, {
-      detached: true,
-      stdio: "ignore",
-    });
-
-    proc.unref();
-
-    return {
-      success: true,
-      pid: proc.pid,
-      message: `Spawned VS Code window for ${folderPath}`,
-    };
-  } catch (error) {
-    return {
-      success: false,
-      message: `Failed to spawn window: ${error}`,
-    };
-  }
+  });
 }
 
 /**
@@ -124,9 +184,9 @@ export function listWindows(): WindowInfo[] {
   const windows: WindowInfo[] = [];
 
   try {
-    // Get all processes named "Code" or "kilocode"
+    // Get all supported editor processes.
     const result = execSync(
-      'powershell -Command "Get-Process -Name Code,kilocode -ErrorAction SilentlyContinue | Select-Object Id,ProcessName | ConvertTo-Json"',
+      'powershell -Command "Get-Process -Name Code,Code.real,kilocode -ErrorAction SilentlyContinue | Select-Object Id,ProcessName | ConvertTo-Json"',
       { encoding: "utf-8" }
     );
 
@@ -134,10 +194,15 @@ export function listWindows(): WindowInfo[] {
     const procs = Array.isArray(processes) ? processes : [processes];
 
     for (const proc of procs) {
+      if (!isSupportedEditorProcessName(proc.ProcessName)) {
+        continue;
+      }
+
       windows.push({
         pid: proc.Id,
         title: proc.ProcessName,
         socketPath: `\\\\.\\pipe\\kilo-ipc-${proc.Id}`,
+        processName: proc.ProcessName,
       });
     }
   } catch {
@@ -156,12 +221,15 @@ export async function sendMessageForeground(
   message: string
 ): Promise<boolean> {
   try {
-    const tempDir = process.env.TEMP || process.env.TMP || ".";
+    const tempDir = getWritableTempDir();
     const msgFile = nodePath.join(tempDir, `reprompty-msg-${Date.now()}.txt`);
     const ps1File = nodePath.join(tempDir, `reprompty-send-${Date.now()}.ps1`);
+    const tempDirEscaped = tempDir.replace(/\\/g, "\\\\").replace(/'/g, "''");
     fs.writeFileSync(msgFile, message, "utf-8");
 
     const script = `
+$env:TEMP = '${tempDirEscaped}'
+$env:TMP = '${tempDirEscaped}'
 $Handle = ${windowHandle}
 $MessageFile = '${msgFile.replace(/\\/g, "\\\\").replace(/'/g, "''")}'
 $Message = Get-Content -Path $MessageFile -Raw -Encoding UTF8
@@ -243,10 +311,13 @@ export interface DetectedWindow {
  */
 export function detectWindows(): DetectedWindow[] {
   try {
-    const tempDir = process.env.TEMP || process.env.TMP || ".";
+    const tempDir = getWritableTempDir();
     const ps1File = nodePath.join(tempDir, "reprompty-detect.ps1");
+    const tempDirEscaped = tempDir.replace(/\\/g, "\\\\").replace(/'/g, "''");
 
     const script = `
+$env:TEMP = '${tempDirEscaped}'
+$env:TMP = '${tempDirEscaped}'
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -278,7 +349,13 @@ $callback = [WinDetect+EnumWindowsProc]{
     $wpid = [uint32]0
     [WinDetect]::GetWindowThreadProcessId($hWnd, [ref]$wpid) | Out-Null
     $handleInt = $hWnd.ToInt64()
-    $global:results.Add("$handleInt|$wpid|$title") | Out-Null
+    $processName = ""
+    try {
+      $processName = (Get-Process -Id $wpid -ErrorAction Stop).ProcessName
+    } catch {
+      $processName = ""
+    }
+    $global:results.Add("$handleInt|$wpid|$processName|$title") | Out-Null
   }
   return $true
 }
@@ -298,24 +375,32 @@ $results | ForEach-Object { Write-Output $_ }
     const lines = raw.split("\n").map((l) => l.trim()).filter((l) => l && l !== "True" && l.includes("|"));
     const seen = new Set<number>();
     const results: DetectedWindow[] = [];
+    const cdpAvailable = getCdpPort() !== null;
 
     for (const line of lines) {
       const parts = line.split("|");
-      if (parts.length < 3) continue;
+      if (parts.length < 4) continue;
 
       const handle = parseInt(parts[0], 10);
       const pid = parseInt(parts[1], 10);
-      const title = parts.slice(2).join("|");
+      const rawProcessName = parts[2].trim();
+      const title = parts.slice(3).join("|");
 
       // Deduplicate by window handle (same PID can have multiple windows)
       if (seen.has(handle)) continue;
       seen.add(handle);
 
+      if (rawProcessName && !isSupportedEditorProcessName(rawProcessName)) {
+        continue;
+      }
+
       // Extract folder from title: "folder - Visual Studio Code" or "folder - Kilo Code"
       const titleMatch = title.match(/^(.+?)\s+-\s+(Visual Studio Code|Kilo Code)/);
       const folderPath = titleMatch ? titleMatch[1].trim() : "";
-      const isKilo = title.includes("Kilo Code");
-      const processName = isKilo ? "kilocode" : "Code";
+      const processName = resolveDetectedWindowProcessName(rawProcessName, title);
+      const normalizedProcessName = normalizeEditorProcessName(processName);
+      const isKilo =
+        normalizedProcessName === "kilocode" || title.includes("Kilo Code");
 
       // Probe for IPC pipe
       const pipePath = `\\\\.\\pipe\\kilo-ipc-${pid}`;
@@ -333,9 +418,6 @@ $results | ForEach-Object { Write-Output $_ }
         : isKilo
         ? "kilo-code"
         : "claude-code";
-
-      // CDP is available for Claude Code windows (checked once, cached)
-      const cdpAvailable = !pipeExists && getCdpPort() !== null;
 
       const sendMethod: DetectedWindow["sendMethod"] =
         pipeExists || cdpAvailable ? "background" : "foreground";

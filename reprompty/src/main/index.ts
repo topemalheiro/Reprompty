@@ -7,6 +7,7 @@ import nodePath from "node:path";
 import { join } from "node:path";
 import { scriptManager } from "../core/script-manager.js";
 import { connectionManager } from "../core/connection-manager.js";
+import { layoutManager } from "../core/layout-manager.js";
 import { getOrCreateIpcClient, removeIpcClient } from "../core/ipc-client.js";
 import type { VSCodeWindowConfig } from "../core/connection-manager.js";
 
@@ -494,6 +495,39 @@ electron.ipcMain.handle("scripts-pick-file", async () => {
     ],
   });
   return result.canceled ? null : result.filePaths[0];
+});
+
+// ============================================================================
+// LAYOUT SLOTS IPC HANDLERS
+// ============================================================================
+
+electron.ipcMain.handle("layouts-list", async () => {
+  return layoutManager.listSlots();
+});
+
+electron.ipcMain.handle("layouts-add", async (_event: any, slot: any) => {
+  return layoutManager.addSlot(slot);
+});
+
+electron.ipcMain.handle("layouts-update", async (_event: any, id: string, updates: any) => {
+  return layoutManager.updateSlot(id, updates);
+});
+
+electron.ipcMain.handle("layouts-remove", async (_event: any, id: string) => {
+  return layoutManager.removeSlot(id);
+});
+
+electron.ipcMain.handle("layouts-apply", async (_event: any, id: string) => {
+  return layoutManager.applySlot(id);
+});
+
+electron.ipcMain.handle("layouts-get-script-path", async () => {
+  return layoutManager.getScriptPath();
+});
+
+electron.ipcMain.handle("layouts-set-script-path", async (_event: any, scriptPath: string) => {
+  layoutManager.setScriptPath(scriptPath);
+  return true;
 });
 
 // Clean shutdown - stop all scripts
