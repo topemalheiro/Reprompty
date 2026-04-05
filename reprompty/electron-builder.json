@@ -13,13 +13,14 @@
   },
   "extraResources": [
     {
-      "from": "build",
+      "from": "build-resources",
       "to": ".",
       "filter": ["**/*"]
     }
   ],
   "asar": false,
   "win": {
+    "icon": null,
     "target": [
       {
         "target": "dir",

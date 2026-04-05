@@ -62,9 +62,9 @@ function Mascot() {
   ][frame];
 
   const art = [
-    `                ${smoke[0]}`,
-    `               ${smoke[1]}`,
-    `   (o)_(o)      ${smoke[2]}`,
+    `                 ${smoke[0]}`,
+    `                ${smoke[1]}`,
+    `   (o)_(o)       ${smoke[2]}`,
     `  =( o_o )=   ~~*`,
     `   /  Y  \\-----'`,
     `  / /   \\ \\`,

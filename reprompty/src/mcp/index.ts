@@ -5,9 +5,10 @@ import {
   VSCodeWindowConfig,
 } from "../core/connection-manager.js";
 import { getOrCreateIpcClient } from "../core/ipc-client.js";
-import { spawnWindow, findWindowByTitle, listWindows, getCdpPort } from "../platform/windows.js";
+import { spawnWindow, findWindowByTitle, detectWindows, getCdpPort } from "../platform/windows.js";
 import { sendViaCdp, isCdpAvailable } from "../core/cdp-client.js";
 import { scriptManager } from "../core/script-manager.js";
+import { layoutManager } from "../core/layout-manager.js";
 
 export interface MCPTool {
   name: string;
@@ -149,13 +150,34 @@ export const tools: MCPTool[] = [
   },
   {
     name: "apply_layout",
-    description: "Run the primary or secondary layout script for window positioning",
+    description: "Apply a layout slot to position/resize the active VS Code window. Use slot letter (A, B) or slot name.",
     inputSchema: {
       type: "object",
       properties: {
-        role: { type: "string", enum: ["primary", "secondary"], description: "Which layout to apply" },
+        slot: { type: "string", description: "Slot letter (A, B) or slot name (e.g. 'Dual Bottom')" },
+        windowTitle: { type: "string", description: "Optional: target a specific window by title substring" },
       },
-      required: ["role"],
+      required: ["slot"],
+    },
+  },
+  {
+    name: "list_layout_slots",
+    description: "List all available layout slots with their configurations (position, size, hotkey)",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+  },
+  {
+    name: "spawn_and_layout",
+    description: "Spawn a new VS Code window for a project folder and apply a layout slot to position it",
+    inputSchema: {
+      type: "object",
+      properties: {
+        folderPath: { type: "string", description: "Path to the project folder" },
+        slot: { type: "string", description: "Layout slot letter (A, B) or name to apply after spawning" },
+      },
+      required: ["folderPath", "slot"],
     },
   },
   {
@@ -331,17 +353,68 @@ export async function callTool(
     }
 
     case "apply_layout": {
-      const role = args.role as "primary" | "secondary";
-      const script = scriptManager.getLayoutScript(role);
-      if (!script) {
-        return { content: [{ type: "text", text: `No ${role} layout script configured` }] };
+      const slotKey = args.slot as string;
+      // Try by letter first, then by name
+      const slot = layoutManager.getSlotByLetter(slotKey) ??
+        layoutManager.listSlots().find((s) => s.name.toLowerCase() === slotKey.toLowerCase());
+      if (!slot) {
+        const available = layoutManager.listSlots().map((s) => `${s.letter}: ${s.name}`).join(", ");
+        return { content: [{ type: "text", text: `Slot "${slotKey}" not found. Available: ${available}` }] };
       }
-      const started = scriptManager.runScript(script.id);
-      return { content: [{ type: "text", text: started ? `Applied ${role} layout: ${script.name}` : `Failed to apply layout` }] };
+      const winTitle = args.windowTitle as string | undefined;
+      const result = await layoutManager.applySlot(slot.id, winTitle);
+      return { content: [{ type: "text", text: result.success ? `Applied layout slot ${slot.letter}: ${slot.name}` : `Failed: ${result.error}` }] };
+    }
+
+    case "list_layout_slots": {
+      const slots = layoutManager.listSlots();
+      return { content: [{ type: "text", text: JSON.stringify(slots, null, 2) }] };
+    }
+
+    case "spawn_and_layout": {
+      const folderPath = args.folderPath as string;
+      const slotKey = args.slot as string;
+
+      const slot = layoutManager.getSlotByLetter(slotKey) ??
+        layoutManager.listSlots().find((s) => s.name.toLowerCase() === slotKey.toLowerCase());
+      if (!slot) {
+        const available = layoutManager.listSlots().map((s) => `${s.letter}: ${s.name}`).join(", ");
+        return { content: [{ type: "text", text: `Slot "${slotKey}" not found. Available: ${available}` }] };
+      }
+
+      // Spawn the window
+      const spawnResult = await spawnWindow(folderPath);
+      if (!spawnResult.success) {
+        return { content: [{ type: "text", text: `Failed to spawn: ${spawnResult.message}` }] };
+      }
+
+      // Wait for the window to initialize, then detect it by folder path
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+
+      // Extract folder name from path to use as window title filter
+      const folderName = folderPath.replace(/\\/g, "/").split("/").filter(Boolean).pop() || "";
+
+      // Try to find the new window by folder name in title
+      const windows = detectWindows();
+      const newWindow = windows.find((w) =>
+        w.title.toLowerCase().includes(folderName.toLowerCase()) &&
+        w.title.includes("Visual Studio Code")
+      );
+      const windowTitle = newWindow ? folderName : undefined;
+
+      const layoutResult = await layoutManager.applySlot(slot.id, windowTitle);
+      return {
+        content: [{
+          type: "text",
+          text: layoutResult.success
+            ? `Spawned ${folderPath} and applied slot ${slot.letter}: ${slot.name}`
+            : `Spawned ${folderPath} but layout failed: ${layoutResult.error}`,
+        }],
+      };
     }
 
     case "detect_windows": {
-      const windows = listWindows();
+      const windows = detectWindows();
       return { content: [{ type: "text", text: JSON.stringify(windows, null, 2) }] };
     }
 

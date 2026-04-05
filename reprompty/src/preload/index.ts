@@ -29,6 +29,15 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getScriptOutput: (id: string) => ipcRenderer.invoke("scripts-get-output", id),
   pickScriptFile: () => ipcRenderer.invoke("scripts-pick-file"),
 
+  // Layout slots
+  listLayoutSlots: () => ipcRenderer.invoke("layouts-list"),
+  addLayoutSlot: (slot: unknown) => ipcRenderer.invoke("layouts-add", slot),
+  updateLayoutSlot: (id: string, updates: unknown) => ipcRenderer.invoke("layouts-update", id, updates),
+  removeLayoutSlot: (id: string) => ipcRenderer.invoke("layouts-remove", id),
+  applyLayoutSlot: (id: string) => ipcRenderer.invoke("layouts-apply", id),
+  getLayoutScriptPath: () => ipcRenderer.invoke("layouts-get-script-path"),
+  setLayoutScriptPath: (path: string) => ipcRenderer.invoke("layouts-set-script-path", path),
+
   // Script event listeners (streaming from main process)
   onScriptOutput: (callback: (data: unknown) => void) => {
     ipcRenderer.on("script-output", (_event, data) => callback(data));

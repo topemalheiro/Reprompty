@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gh api:*)",
+      "Bash(bun run:*)",
+      "Bash(npx --yes tsx src/mcp/server.ts)",
+      "Bash(printf '{\"\"\"\"jsonrpc\"\"\"\":\"\"\"\"2.0\"\"\"\",\"\"\"\"id\"\"\"\":1,\"\"\"\"method\"\"\"\":\"\"\"\"initialize\"\"\"\",\"\"\"\"params\"\"\"\":{}}\\\\n{\"\"\"\"jsonrpc\"\"\"\":\"\"\"\"2.0\"\"\"\",\"\"\"\"id\"\"\"\":2,\"\"\"\"method\"\"\"\":\"\"\"\"tools/list\"\"\"\",\"\"\"\"params\"\"\"\":{}}\\\\n')",
+      "Bash(echo EXIT:$?)",
+      "Bash(ls -la ~/.claude/mcp*.json)",
+      "Read(//c/Users/topem/Desktop/Windows Project/Reprompty/$APPDATA/Code/User/globalStorage/anthropic.claude-code/settings/**)",
+      "Bash(cat c:/Users/topem/.claude/mcp-configs/*)",
+      "Bash(printf '{\"\"\"\"jsonrpc\"\"\"\":\"\"\"\"2.0\"\"\"\",\"\"\"\"id\"\"\"\":1,\"\"\"\"method\"\"\"\":\"\"\"\"initialize\"\"\"\",\"\"\"\"params\"\"\"\":{}}\\\\n')",
+      "Bash(\"C:/Program Files/nodejs/npx.cmd\" --yes tsx src/mcp/server.ts)",
+      "Read(//c//**)",
+      "Bash(npx --yes tsx \"C:/Users/topem/Desktop/Windows Project/Reprompty/reprompty/src/mcp/server.ts\")",
+      "Bash(cmd /c \"C:/Users/topem/.reprompty/mcp-server.cmd\")",
+      "Bash(where tsx:*)",
+      "Bash(\"C:/Program Files/nodejs/npx.cmd\" --yes tsx --version)",
+      "mcp__reprompty__spawn_window",
+      "Bash(powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"C:\\\\Users\\\\topem\\\\scripts\\\\VSCodeSidePanelLayout\\\\VSCodeSidePanelLayout.ps1\" -SingleOnce)"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\topem\\.claude",
+      "c:\\Users\\topem\\Desktop\\Windows Project\\Reprompty"
+    ]
+  }
+}
