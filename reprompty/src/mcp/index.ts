@@ -394,13 +394,15 @@ export async function callTool(
       // Extract folder name from path to use as window title filter
       const folderName = folderPath.replace(/\\/g, "/").split("/").filter(Boolean).pop() || "";
 
-      // Try to find the new window by folder name in title
+      // Try to confirm the new window exists, but still fall back to the
+      // folder name so layout targeting does not silently degrade if detection
+      // is slow on a busy system.
       const windows = detectWindows();
-      const newWindow = windows.find((w) =>
+      windows.find((w) =>
         w.title.toLowerCase().includes(folderName.toLowerCase()) &&
         w.title.includes("Visual Studio Code")
       );
-      const windowTitle = newWindow ? folderName : undefined;
+      const windowTitle = folderName;
 
       const layoutResult = await layoutManager.applySlot(slot.id, windowTitle);
       return {

@@ -53,6 +53,24 @@ npm install
 npm start
 ```
 
+## Kilo Code MCP Setup
+
+Reprompty's stdio MCP server entrypoint is `reprompty/src/mcp/server.ts`.
+
+After installing dependencies in `reprompty/`, register the MCP server in Kilo Code with:
+
+- Working directory: `reprompty`
+- Command: `bun`
+- Args: `run`, `mcp`
+- Equivalent shell command: `cd reprompty && bun run mcp`
+
+Direct entrypoint alternative:
+
+- Command: `bun`
+- Args: `run`, `src/mcp/server.ts`
+
+Do not point Kilo Code at `reprompty/src/mcp/index.ts`; that module contains tool implementations, while `reprompty/src/mcp/server.ts` is the stdio transport that handles MCP `initialize`, `tools/list`, and `tools/call`.
+
 ## Architecture
 
 Reprompty is designed as a modular framework that can:

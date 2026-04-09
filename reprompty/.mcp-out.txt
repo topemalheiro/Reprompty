@@ -1,0 +1,3 @@
+Reprompty MCP server loaded
+Available tools: spawn_window, send_prompt, add_connection, list_connections, remove_connection, daisy_chain, list_scripts, run_script, stop_script, apply_layout, list_layout_slots, spawn_and_layout, detect_windows, check_cdp
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"serverInfo":{"name":"reprompty","version":"0.2.0"}}}
