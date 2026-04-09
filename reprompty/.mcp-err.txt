@@ -1,0 +1,2 @@
+[Reprompty MCP] Server started on stdio
+[Reprompty MCP] Tools: spawn_window, send_prompt, add_connection, list_connections, remove_connection, daisy_chain, list_scripts, run_script, stop_script, apply_layout, list_layout_slots, spawn_and_layout, detect_windows, check_cdp

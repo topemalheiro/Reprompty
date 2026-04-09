@@ -367,7 +367,7 @@ $results | ForEach-Object { Write-Output $_ }
 
     const raw = execSync(
       `powershell -NoProfile -ExecutionPolicy Bypass -File "${ps1File}"`,
-      { encoding: "utf-8", timeout: 5000 }
+      { encoding: "utf-8", timeout: 10000 }
     ).trim();
 
     if (!raw) return [];
