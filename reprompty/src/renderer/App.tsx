@@ -10,7 +10,7 @@ interface DetectedWindow {
   extension: "kilo-code" | "claude-code" | "codex" | "unknown";
   activeAgent: "kilo-code" | "claude-code" | "codex" | "unknown";
   availableAgents: Array<"kilo-code" | "claude-code" | "codex">;
-  backgroundRoute: "ipc-kilo" | "cdp-claude" | "cdp-codex" | "foreground";
+  backgroundRoute: "ipc-kilo" | "cdp-kilo" | "cdp-claude" | "cdp-codex" | "foreground";
   pipePath: string | null;
   sendMethod: "background" | "foreground";
 }

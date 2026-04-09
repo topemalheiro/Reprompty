@@ -466,6 +466,41 @@ function getSendScript(agent: Exclude<AgentKind, "unknown">, message: string) {
     };
   }
 
+  if (agent === "kilo-code") {
+    return {
+      inject: `
+      (() => {
+        var iframe = document.querySelector('iframe');
+        if (!iframe) return 'no_iframe';
+        var doc = iframe.contentDocument;
+        if (!doc) return 'no_contentDocument';
+        var input = doc.querySelector('textarea');
+        if (!input) input = doc.querySelector('[role="textbox"]');
+        if (!input) return 'input_not_found';
+        input.focus();
+        input.value = ${escapedMessage};
+        input.dispatchEvent(new InputEvent('input', { bubbles: true, data: ${escapedMessage}, inputType: 'insertText' }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+        return 'injected';
+      })()
+      `,
+      submit: `
+      (() => {
+        var iframe = document.querySelector('iframe');
+        if (!iframe) return 'no_iframe';
+        var doc = iframe.contentDocument;
+        var input = doc.querySelector('textarea');
+        if (!input) input = doc.querySelector('[role="textbox"]');
+        if (!input) return 'no_input';
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+        input.dispatchEvent(new KeyboardEvent('keypress', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+        input.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+        return 'sent';
+      })()
+      `,
+    };
+  }
+
   return null;
 }
 

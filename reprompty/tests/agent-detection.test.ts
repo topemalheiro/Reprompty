@@ -123,6 +123,9 @@ describe("agent detection helpers", () => {
     expect(resolveBackgroundRoute("kilo-code", ["kilo-code"], true)).toBe(
       "ipc-kilo"
     );
+    expect(resolveBackgroundRoute("kilo-code", ["kilo-code"], false)).toBe(
+      "cdp-kilo"
+    );
     expect(
       resolveBackgroundRoute("unknown", ["claude-code", "codex"], false)
     ).toBe("foreground");
