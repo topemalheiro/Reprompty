@@ -3,21 +3,171 @@ import WebSocketLib from "ws";
 
 const WS = WebSocketLib;
 
-// ============================================================================
-// CDP Client - Send messages to Claude Code via Chrome DevTools Protocol
-//
-// The Claude Code extension's chat input lives inside a nested iframe:
-//   webview target → iframe.contentDocument → .messageInput_cKsPxg[contenteditable]
-//
-// We inject text + dispatch Enter key to submit. Zero focus stealing.
-// ============================================================================
+export type AgentKind = "claude-code" | "codex" | "kilo-code" | "unknown";
 
-interface CdpTarget {
+export interface CdpTarget {
   id: string;
   type: string;
   title: string;
   url: string;
   webSocketDebuggerUrl: string;
+}
+
+export interface CdpWindowTargetGroup {
+  page: CdpTarget;
+  iframes: CdpTarget[];
+}
+
+export interface WindowAgentState {
+  pageTitle: string;
+  activeAgent: AgentKind;
+  availableAgents: AgentKind[];
+}
+
+interface ViewSwitcherProbe {
+  activeLabel: string | null;
+  labels: string[];
+}
+
+interface SendViaAgentOptions {
+  agent: Exclude<AgentKind, "unknown">;
+  windowTitle?: string;
+}
+
+function normalizeText(value?: string | null): string {
+  return (value ?? "").trim().toLowerCase();
+}
+
+function uniqueAgents(agents: AgentKind[]): AgentKind[] {
+  return Array.from(
+    new Set(agents.filter((agent): agent is Exclude<AgentKind, "unknown"> => agent !== "unknown"))
+  );
+}
+
+function stripEditorSuffix(title: string): string {
+  return title
+    .replace(/\s+-\s+Visual Studio Code.*$/i, "")
+    .replace(/\s+-\s+Kilo Code.*$/i, "")
+    .trim();
+}
+
+function windowTitleScore(candidateTitle: string, windowTitle: string): number {
+  const normalizedCandidate = normalizeText(candidateTitle);
+  const normalizedWindow = normalizeText(windowTitle);
+  if (!normalizedCandidate || !normalizedWindow) {
+    return -1;
+  }
+  if (normalizedCandidate === normalizedWindow) {
+    return 100;
+  }
+
+  const strippedCandidate = normalizeText(stripEditorSuffix(candidateTitle));
+  const strippedWindow = normalizeText(stripEditorSuffix(windowTitle));
+  if (strippedCandidate && strippedCandidate === strippedWindow) {
+    return 90;
+  }
+  if (normalizedWindow.includes(normalizedCandidate) || normalizedCandidate.includes(normalizedWindow)) {
+    return 80;
+  }
+  if (strippedWindow && strippedCandidate && (strippedWindow.includes(strippedCandidate) || strippedCandidate.includes(strippedWindow))) {
+    return 70;
+  }
+
+  return -1;
+}
+
+export function mapAgentLabelToKind(label?: string | null): AgentKind {
+  const normalized = normalizeText(label);
+  if (normalized === "claude code") {
+    return "claude-code";
+  }
+  if (normalized === "codex") {
+    return "codex";
+  }
+  if (normalized === "kilo code") {
+    return "kilo-code";
+  }
+  return "unknown";
+}
+
+export function mapTargetUrlToAgent(url?: string | null): AgentKind {
+  const normalized = normalizeText(url);
+  if (!normalized) {
+    return "unknown";
+  }
+  if (normalized.includes("extensionid=anthropic.claude-code")) {
+    return "claude-code";
+  }
+  if (normalized.includes("extensionid=openai.chatgpt")) {
+    return "codex";
+  }
+  if (normalized.includes("extensionid=kilocode.kilo-code")) {
+    return "kilo-code";
+  }
+  return "unknown";
+}
+
+export function groupTargetsByPage(targets: CdpTarget[]): CdpWindowTargetGroup[] {
+  const groups: CdpWindowTargetGroup[] = [];
+  let currentGroup: CdpWindowTargetGroup | null = null;
+
+  for (const target of targets) {
+    if (target.type === "page") {
+      currentGroup = { page: target, iframes: [] };
+      groups.push(currentGroup);
+      continue;
+    }
+
+    if (target.type === "iframe" && currentGroup) {
+      currentGroup.iframes.push(target);
+    }
+  }
+
+  return groups;
+}
+
+export function findWindowGroupByTitle(
+  groups: CdpWindowTargetGroup[],
+  windowTitle?: string
+): CdpWindowTargetGroup | null {
+  if (groups.length === 0) {
+    return null;
+  }
+  if (!windowTitle) {
+    return groups.length === 1 ? groups[0] : null;
+  }
+
+  let bestGroup: CdpWindowTargetGroup | null = null;
+  let bestScore = -1;
+  let tied = false;
+
+  for (const group of groups) {
+    const score = windowTitleScore(group.page.title, windowTitle);
+    if (score > bestScore) {
+      bestGroup = group;
+      bestScore = score;
+      tied = false;
+      continue;
+    }
+    if (score >= 0 && score === bestScore) {
+      tied = true;
+    }
+  }
+
+  if (bestScore < 0 || tied) {
+    return null;
+  }
+
+  return bestGroup;
+}
+
+function findAgentIframeTarget(
+  group: CdpWindowTargetGroup,
+  agent: Exclude<AgentKind, "unknown">
+): CdpTarget | null {
+  return (
+    group.iframes.find((target) => mapTargetUrlToAgent(target.url) === agent) ?? null
+  );
 }
 
 async function getCdpTargets(port: number): Promise<CdpTarget[]> {
@@ -27,7 +177,14 @@ async function getCdpTargets(port: number): Promise<CdpTarget[]> {
       res.on("data", (chunk) => (data += chunk));
       res.on("end", () => {
         try {
-          resolve(JSON.parse(data));
+          const parsed = JSON.parse(data);
+          const targets = Array.isArray(parsed) ? parsed : [];
+          resolve(
+            targets.filter(
+              (target): target is CdpTarget =>
+                Boolean(target?.type && target?.webSocketDebuggerUrl)
+            )
+          );
         } catch {
           reject(new Error("Failed to parse CDP targets"));
         }
@@ -41,65 +198,14 @@ async function getCdpTargets(port: number): Promise<CdpTarget[]> {
   });
 }
 
-function findClaudeCodeTarget(targets: CdpTarget[], windowTitle?: string): CdpTarget | null {
-  const claudePatterns = [
-    "extensionId=Anthropic.claude-code",
-    "extensionId=anthropic.claude-code",
-  ];
-
-  // If we have a window title, find the matching page target first,
-  // then get the Claude webview iframe that follows it
-  if (windowTitle) {
-    for (let i = 0; i < targets.length; i++) {
-      const t = targets[i];
-      if (t.type === "page" && t.title && windowTitle.includes(t.title.split(" - ").slice(-2).join(" - ").replace(" - Visual Studio Code", "").trim())) {
-        // Found the page, look for Claude iframe after it
-        for (let j = i + 1; j < targets.length; j++) {
-          if (targets[j].type === "page") break; // hit next page, stop
-          for (const pattern of claudePatterns) {
-            if (targets[j].type === "iframe" && targets[j].url?.includes(pattern)) {
-              return targets[j];
-            }
-          }
-        }
-      }
-    }
-
-    // Try matching by folder name in the page title
-    const folderMatch = windowTitle.match(/^(.+?)\s+-\s+(Visual Studio Code|Kilo Code)/);
-    const folder = folderMatch ? folderMatch[1].trim() : windowTitle;
-    for (let i = 0; i < targets.length; i++) {
-      if (targets[i].type === "page" && targets[i].title?.includes(folder)) {
-        for (let j = i + 1; j < targets.length; j++) {
-          if (targets[j].type === "page") break;
-          for (const pattern of claudePatterns) {
-            if (targets[j].type === "iframe" && targets[j].url?.includes(pattern)) {
-              return targets[j];
-            }
-          }
-        }
-      }
-    }
-  }
-
-  // Fallback: first Claude webview found
-  for (const pattern of claudePatterns) {
-    const target = targets.find(
-      (t) => t.type === "iframe" && t.url?.includes(pattern)
-    );
-    if (target) return target;
-  }
-
-  return null;
-}
-
 function cdpEvaluate(
   ws: InstanceType<typeof WS>,
   expression: string,
   id: number
-): Promise<{ result: { value?: unknown; type?: string } }> {
+): Promise<{ result?: { result?: { value?: unknown; type?: string } } }> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
+      ws.off("message", handler);
       reject(new Error("CDP evaluate timed out"));
     }, 8000);
 
@@ -116,7 +222,7 @@ function cdpEvaluate(
           }
         }
       } catch {
-        // Not our message
+        // Ignore unrelated messages
       }
     };
 
@@ -131,48 +237,165 @@ function cdpEvaluate(
   });
 }
 
-/**
- * Send a message to Claude Code via CDP (background, no focus stealing).
- *
- * Path: webview target → iframe.contentDocument → .messageInput_cKsPxg → inject text → Enter
- */
-export async function sendViaCdp(
-  port: number,
-  message: string,
-  windowTitle?: string
-): Promise<{ success: boolean; error?: string }> {
-  let ws: InstanceType<typeof WS> | null = null;
+function getEvaluationValue(message: {
+  result?: { result?: { value?: unknown; type?: string } };
+}): unknown {
+  return message?.result?.result?.value;
+}
+
+async function withTargetSocket<T>(
+  target: CdpTarget,
+  callback: (ws: InstanceType<typeof WS>) => Promise<T>
+): Promise<T> {
+  const ws = new WS(target.webSocketDebuggerUrl);
 
   try {
-    const targets = await getCdpTargets(port);
-    const target = findClaudeCodeTarget(targets, windowTitle);
-    if (!target) {
-      return { success: false, error: "Claude Code webview not found" };
-    }
-
-    ws = new WS(target.webSocketDebuggerUrl);
     await new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(
         () => reject(new Error("WS connect timeout")),
         3000
       );
-      ws!.on("open", () => {
+      ws.on("open", () => {
         clearTimeout(timeout);
         resolve();
       });
-      ws!.on("error", () => {
+      ws.on("error", () => {
         clearTimeout(timeout);
         reject(new Error("WebSocket connection error"));
       });
     });
 
-    const escapedMessage = JSON.stringify(message);
+    return await callback(ws);
+  } finally {
+    if (ws.readyState === WebSocketLib.OPEN) {
+      ws.close();
+    }
+  }
+}
 
-    // First: inject text
-    await cdpEvaluate(
+async function probeViewSwitcher(group: CdpWindowTargetGroup): Promise<ViewSwitcherProbe> {
+  return withTargetSocket(group.page, async (ws) => {
+    const result = await cdpEvaluate(
       ws,
       `
-      (function() {
+      (() => {
+        const container = document.querySelector('ul.actions-container[aria-label="Active View Switcher"]');
+        if (!container) {
+          return { activeLabel: null, labels: [] };
+        }
+        const items = Array.from(container.querySelectorAll('li.action-item'));
+        const labels = items
+          .map((item) => {
+            const labelNode = item.querySelector('.action-label[aria-label]');
+            const label = labelNode?.getAttribute('aria-label') || labelNode?.textContent?.trim() || '';
+            const selected = item.classList.contains('checked') || item.getAttribute('aria-selected') === 'true';
+            return label ? { label, selected } : null;
+          })
+          .filter((item) => Boolean(item));
+        const active = labels.find((item) => item.selected)?.label ?? null;
+        return {
+          activeLabel: active,
+          labels: labels.map((item) => item.label),
+        };
+      })()
+      `,
+      1
+    );
+
+    const value = getEvaluationValue(result);
+    if (!value || typeof value !== "object") {
+      return { activeLabel: null, labels: [] };
+    }
+
+    const probe = value as { activeLabel?: unknown; labels?: unknown };
+    return {
+      activeLabel:
+        typeof probe.activeLabel === "string" ? probe.activeLabel : null,
+      labels: Array.isArray(probe.labels)
+        ? probe.labels.filter((item): item is string => typeof item === "string")
+        : [],
+    };
+  });
+}
+
+function buildWindowAgentState(
+  group: CdpWindowTargetGroup,
+  probe: ViewSwitcherProbe
+): WindowAgentState {
+  const iframeAgents = group.iframes.map((target) => mapTargetUrlToAgent(target.url));
+  const labelAgents = probe.labels.map((label) => mapAgentLabelToKind(label));
+  return {
+    pageTitle: group.page.title,
+    activeAgent: mapAgentLabelToKind(probe.activeLabel),
+    availableAgents: uniqueAgents([...iframeAgents, ...labelAgents]),
+  };
+}
+
+export async function getWindowAgentStates(port: number): Promise<WindowAgentState[]> {
+  const targets = await getCdpTargets(port);
+  const groups = groupTargetsByPage(targets);
+  const states: WindowAgentState[] = [];
+
+  for (const group of groups) {
+    try {
+      const probe = await probeViewSwitcher(group);
+      states.push(buildWindowAgentState(group, probe));
+    } catch {
+      states.push({
+        pageTitle: group.page.title,
+        activeAgent: "unknown",
+        availableAgents: uniqueAgents(
+          group.iframes.map((target) => mapTargetUrlToAgent(target.url))
+        ),
+      });
+    }
+  }
+
+  return states;
+}
+
+export function findWindowAgentState(
+  states: WindowAgentState[],
+  windowTitle?: string
+): WindowAgentState | null {
+  if (states.length === 0) {
+    return null;
+  }
+  if (!windowTitle) {
+    return states.length === 1 ? states[0] : null;
+  }
+
+  let bestState: WindowAgentState | null = null;
+  let bestScore = -1;
+  let tied = false;
+
+  for (const state of states) {
+    const score = windowTitleScore(state.pageTitle, windowTitle);
+    if (score > bestScore) {
+      bestState = state;
+      bestScore = score;
+      tied = false;
+      continue;
+    }
+    if (score >= 0 && score === bestScore) {
+      tied = true;
+    }
+  }
+
+  if (bestScore < 0 || tied) {
+    return null;
+  }
+
+  return bestState;
+}
+
+function getSendScript(agent: Exclude<AgentKind, "unknown">, message: string) {
+  const escapedMessage = JSON.stringify(message);
+
+  if (agent === "claude-code") {
+    return {
+      inject: `
+      (() => {
         var iframe = document.querySelector('iframe');
         if (!iframe) return 'no_iframe';
         var doc = iframe.contentDocument;
@@ -183,63 +406,166 @@ export async function sendViaCdp(
         if (!input) return 'input_not_found';
         input.focus();
         input.textContent = ${escapedMessage};
-        input.dispatchEvent(new InputEvent('input', {bubbles:true, data:${escapedMessage}, inputType:'insertText'}));
+        input.dispatchEvent(new InputEvent('input', { bubbles: true, data: ${escapedMessage}, inputType: 'insertText' }));
         return 'injected';
       })()
       `,
-      1
-    );
-
-    // Small delay then press Enter
-    await new Promise((r) => setTimeout(r, 150));
-
-    const enterResult = await cdpEvaluate(
-      ws,
-      `
-      (function() {
+      submit: `
+      (() => {
         var iframe = document.querySelector('iframe');
         if (!iframe) return 'no_iframe';
         var doc = iframe.contentDocument;
         var input = doc.querySelector('.messageInput_cKsPxg[contenteditable]');
         if (!input) input = doc.querySelector('[contenteditable="plaintext-only"][role="textbox"]');
+        if (!input) input = doc.querySelector('[role="textbox"][contenteditable]');
         if (!input) return 'no_input';
-        input.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true}));
-        input.dispatchEvent(new KeyboardEvent('keypress', {key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true}));
-        input.dispatchEvent(new KeyboardEvent('keyup', {key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true}));
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+        input.dispatchEvent(new KeyboardEvent('keypress', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+        input.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
         return 'sent';
       })()
       `,
-      2
-    );
-
-    const value = (enterResult as any)?.result?.result?.value;
-    if (value === "sent") {
-      return { success: true };
-    }
-
-    return {
-      success: false,
-      error: `CDP inject returned: ${String(value)}`,
     };
+  }
+
+  if (agent === "codex") {
+    return {
+      inject: `
+      (() => {
+        var iframe = document.querySelector('iframe');
+        if (!iframe) return 'no_iframe';
+        var doc = iframe.contentDocument;
+        if (!doc) return 'no_contentDocument';
+        var input = doc.querySelector('div.ProseMirror[contenteditable="true"]');
+        if (!input) input = doc.querySelector('.ProseMirror[contenteditable="true"]');
+        if (!input) return 'input_not_found';
+        input.focus();
+        input.innerHTML = '';
+        var paragraph = doc.createElement('p');
+        paragraph.textContent = ${escapedMessage};
+        input.appendChild(paragraph);
+        input.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, data: ${escapedMessage}, inputType: 'insertText' }));
+        input.dispatchEvent(new InputEvent('input', { bubbles: true, data: ${escapedMessage}, inputType: 'insertText' }));
+        return 'injected';
+      })()
+      `,
+      submit: `
+      (() => {
+        var iframe = document.querySelector('iframe');
+        if (!iframe) return 'no_iframe';
+        var doc = iframe.contentDocument;
+        var input = doc.querySelector('div.ProseMirror[contenteditable="true"]');
+        if (!input) input = doc.querySelector('.ProseMirror[contenteditable="true"]');
+        if (!input) return 'no_input';
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+        input.dispatchEvent(new KeyboardEvent('keypress', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+        input.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+        return 'sent';
+      })()
+      `,
+    };
+  }
+
+  return null;
+}
+
+async function sendIntoAgentTarget(
+  target: CdpTarget,
+  agent: Exclude<AgentKind, "unknown">,
+  message: string
+): Promise<{ success: boolean; error?: string }> {
+  const scripts = getSendScript(agent, message);
+  if (!scripts) {
+    return { success: false, error: `CDP sending is not supported for ${agent}` };
+  }
+
+  try {
+    return await withTargetSocket(target, async (ws) => {
+      const injectResult = await cdpEvaluate(ws, scripts.inject, 1);
+      const injectValue = getEvaluationValue(injectResult);
+      if (injectValue !== "injected") {
+        return {
+          success: false,
+          error: `CDP inject returned: ${String(injectValue)}`,
+        };
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      const submitResult = await cdpEvaluate(ws, scripts.submit, 2);
+      const submitValue = getEvaluationValue(submitResult);
+      if (submitValue === "sent") {
+        return { success: true };
+      }
+
+      return {
+        success: false,
+        error: `CDP submit returned: ${String(submitValue)}`,
+      };
+    });
   } catch (err) {
     return {
       success: false,
       error: err instanceof Error ? err.message : String(err),
     };
-  } finally {
-    if (ws && ws.readyState === WebSocketLib.OPEN) {
-      ws.close();
-    }
   }
 }
 
-/**
- * Check if CDP is available and Claude Code webview is reachable
- */
-export async function isCdpAvailable(port: number): Promise<boolean> {
+export async function sendViaAgentCdp(
+  port: number,
+  message: string,
+  options: SendViaAgentOptions
+): Promise<{ success: boolean; error?: string }> {
   try {
     const targets = await getCdpTargets(port);
-    return findClaudeCodeTarget(targets) !== null;
+    const groups = groupTargetsByPage(targets);
+    const windowGroup = findWindowGroupByTitle(groups, options.windowTitle);
+
+    if (!windowGroup) {
+      return {
+        success: false,
+        error: options.windowTitle
+          ? `No unique VS Code CDP target matched "${options.windowTitle}"`
+          : "No unique VS Code CDP target matched the requested agent",
+      };
+    }
+
+    const iframeTarget = findAgentIframeTarget(windowGroup, options.agent);
+    if (!iframeTarget) {
+      return {
+        success: false,
+        error: `${options.agent} webview not found in ${windowGroup.page.title}`,
+      };
+    }
+
+    return sendIntoAgentTarget(iframeTarget, options.agent, message);
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+export async function sendViaCdp(
+  port: number,
+  message: string,
+  windowTitle?: string
+): Promise<{ success: boolean; error?: string }> {
+  return sendViaAgentCdp(port, message, {
+    agent: "claude-code",
+    windowTitle,
+  });
+}
+
+export async function isCdpAvailable(
+  port: number,
+  agent: Exclude<AgentKind, "unknown"> = "claude-code"
+): Promise<boolean> {
+  try {
+    const targets = await getCdpTargets(port);
+    const groups = groupTargetsByPage(targets);
+    return groups.some((group) => Boolean(findAgentIframeTarget(group, agent)));
   } catch {
     return false;
   }

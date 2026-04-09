@@ -22,6 +22,16 @@ export type SpawnWindowParams =
   | { target: string; windowName?: string }
   | { folderPath: string; windowName?: string };
 
+export type SpawnAndLayoutParams =
+  | { target: string; slot: string; windowName?: string }
+  | { folderPath: string; slot: string; windowName?: string };
+
+export interface ApplyLayoutParams {
+  slot: string;
+  windowHandle?: number;
+  windowTitle?: string;
+}
+
 export interface SpawnTargetInfo {
   id: string;
   label: string;
@@ -73,6 +83,27 @@ export const RepromptySkill = {
    */
   async spawn_window(params: SpawnWindowParams): Promise<string> {
     return runMCPTool("spawn_window", params as unknown as Record<string, unknown>);
+  },
+
+  /**
+   * Spawn a new VS Code window and place it into a layout slot
+   */
+  async spawn_and_layout(params: SpawnAndLayoutParams): Promise<string> {
+    return runMCPTool("spawn_and_layout", params as unknown as Record<string, unknown>);
+  },
+
+  /**
+   * Apply a saved layout slot to an existing VS Code window
+   */
+  async apply_layout(params: ApplyLayoutParams): Promise<string> {
+    return runMCPTool("apply_layout", params as unknown as Record<string, unknown>);
+  },
+
+  /**
+   * List all saved layout slots
+   */
+  async list_layout_slots(): Promise<string> {
+    return runMCPTool("list_layout_slots", {});
   },
 
   /**

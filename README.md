@@ -89,9 +89,11 @@ From MCP:
 mcp__reprompty__list_spawn_targets
 
 mcp__reprompty__spawn_window { "target": "windows-project" }
+mcp__reprompty__spawn_and_layout { "target": "windows-project", "slot": "B" }
 ```
 
 `spawn_window` and `spawn_and_layout` still support raw `folderPath` if you prefer not to use aliases.
+`spawn_and_layout` now waits for a uniquely identifiable VS Code window handle after spawn. If Reprompty cannot isolate one window safely, it returns an error instead of moving the wrong editor.
 
 ## Script-Defined MCP Tools (Layout Presets)
 
@@ -137,6 +139,29 @@ In the **Scripts** tab, click **+ Add MCP tool** inside a script card and set:
 - Generated script tools are **one-shot** invocations. The MCP call waits for the script to exit.
   - If your script is a long-running hotkey listener, add a one-shot switch like `-Once` that runs the layout and exits.
 - Output from MCP-triggered runs is appended to the script terminal with a `[MCP:<toolName>]` prefix.
+- Reprompty passes `-WindowHandle` and `-LogPath` automatically for built-in layout calls, so layout scripts can target an exact VS Code window and write a per-run transcript without changing user-facing flags.
+
+## Layout Debug Logs
+
+Reprompty now writes two useful log streams for layout troubleshooting:
+
+- App / MCP orchestration log:
+  - `%USERPROFILE%\\reprompty-logs\\reprompty-YYYY-MM-DD.log`
+  - Contains `spawn_and_layout` / `apply_layout` requests, baseline window handles, candidate handles, chosen target, and the generated layout log path.
+- Per-run layout transcript:
+  - `%LOCALAPPDATA%\\VSCodeSidePanelLayout\\layout-run-<timestamp>.log`
+  - Contains the one-shot PowerShell layout transcript, including `Found:`, `Repositioned to:`, title-matching diagnostics, and CDP resize output.
+- CDP repair / health log:
+  - `%LOCALAPPDATA%\\VSCodeSidePanelLayout\\repair.log`
+  - Contains the longer-lived repair and launch-hook health events.
+
+For direct MCP calls:
+
+```text
+mcp__reprompty__apply_layout { "slot": "B", "windowHandle": 123456 }
+```
+
+`windowHandle` is preferred over `windowTitle` when you already know the exact target window.
 
 ## Architecture
 

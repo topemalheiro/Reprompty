@@ -105,6 +105,21 @@ type SpawnAndLayoutParams =
   | { folderPath: string; slot: string };
 ```
 
+Reprompty now isolates the spawned window by new handle first and only falls back to a unique title match. If it cannot identify one safe target, the tool fails instead of moving the wrong editor window.
+
+### apply_layout
+Apply a saved layout slot to an existing VS Code window.
+
+```typescript
+interface ApplyLayoutParams {
+  slot: string;
+  windowHandle?: number;
+  windowTitle?: string;
+}
+```
+
+`windowHandle` is preferred when available because it targets one exact window.
+
 ### send_prompt
 Send a prompt to a specific connection.
 
@@ -167,6 +182,14 @@ Header example (PowerShell):
 # reprompty-mcp: {"toolName":"top_monitors_layout_panel_full","label":"Top monitors layout (panel full)","description":"Run the Ctrl+Alt+N top monitors panel-full layout","args":["-SingleOnce"]}
 param(...)
 ```
+
+Built-in layout calls automatically pass `-WindowHandle` and `-LogPath` to compatible scripts, so one-shot layout runs can target the exact VS Code window and leave behind a transcript.
+
+## Layout Logs
+
+- Reprompty app log: `%USERPROFILE%\\reprompty-logs\\reprompty-YYYY-MM-DD.log`
+- One-shot layout transcript: `%LOCALAPPDATA%\\VSCodeSidePanelLayout\\layout-run-<timestamp>.log`
+- CDP repair log: `%LOCALAPPDATA%\\VSCodeSidePanelLayout\\repair.log`
 
 ## Background Messaging (No Foreground Focus)
 

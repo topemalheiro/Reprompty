@@ -6,10 +6,23 @@ import {
 } from "../core/connection-manager.js";
 import { getOrCreateIpcClient } from "../core/ipc-client.js";
 import { scriptManager } from "../core/script-manager.js";
-import { layoutManager } from "../core/layout-manager.js";
+import {
+  layoutManager,
+  type LayoutTarget,
+} from "../core/layout-manager.js";
 import { spawnTargetManager } from "../core/spawn-target-manager.js";
-import { spawnWindow, detectWindows, getCdpPort } from "../platform/windows.js";
-import { sendViaCdp, isCdpAvailable } from "../core/cdp-client.js";
+import {
+  spawnWindow,
+  detectWindows,
+  getCdpPort,
+  type DetectedWindow,
+} from "../platform/windows.js";
+import { sendViaAgentCdp, isCdpAvailable } from "../core/cdp-client.js";
+import {
+  buildSpawnTitleHints,
+  findNewWindowCandidates,
+  selectUniqueWindowByTitle,
+} from "./window-targeting.js";
 
 export interface MCPTool {
   name: string;
@@ -177,7 +190,11 @@ const BUILT_IN_TOOLS: MCPTool[] = [
         },
         windowTitle: {
           type: "string",
-          description: "Optional: target a specific window by title substring",
+          description: "Optional: target a specific window by title",
+        },
+        windowHandle: {
+          type: "number",
+          description: "Optional: exact window handle to target. Preferred over windowTitle",
         },
       },
       required: ["slot"],
@@ -291,6 +308,102 @@ function resolveLayoutSlot(slotKey: string) {
   );
 }
 
+function parseWindowHandle(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const parsed = Number.parseInt(value.trim(), 10);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+
+  return undefined;
+}
+
+function formatWindowSummary(window: DetectedWindow): string {
+  return `${window.handle}:${window.pid}:${window.title}`;
+}
+
+function logToolEvent(message: string, details?: unknown): void {
+  if (details === undefined) {
+    console.log(`[Reprompty MCP] ${message}`);
+    return;
+  }
+
+  console.log(
+    `[Reprompty MCP] ${message} ${JSON.stringify(details)}`
+  );
+}
+
+async function waitForSpawnedWindow(
+  baselineWindows: DetectedWindow[],
+  titleHints: string[],
+  timeoutMs = 15000,
+  pollIntervalMs = 500
+): Promise<{
+  matchedWindow: DetectedWindow | null;
+  finalWindows: DetectedWindow[];
+  newCandidates: DetectedWindow[];
+  reason: string;
+}> {
+  const startedAt = Date.now();
+  let finalWindows = baselineWindows;
+  let newCandidates: DetectedWindow[] = [];
+  let lastReason = "no new window handles detected after spawn";
+
+  while (Date.now() - startedAt < timeoutMs) {
+    finalWindows = await detectWindows();
+    newCandidates = findNewWindowCandidates(baselineWindows, finalWindows);
+
+    if (newCandidates.length === 1) {
+      return {
+        matchedWindow: newCandidates[0],
+        finalWindows,
+        newCandidates,
+        reason: "matched a unique new window handle",
+      };
+    }
+
+    if (newCandidates.length > 1) {
+      const narrowed = selectUniqueWindowByTitle(newCandidates, titleHints);
+      if (narrowed.match) {
+        return {
+          matchedWindow: narrowed.match,
+          finalWindows,
+          newCandidates,
+          reason: `${narrowed.reason} among newly detected windows`,
+        };
+      }
+
+      lastReason = `${narrowed.reason}; new candidates=${newCandidates
+        .map(formatWindowSummary)
+        .join(" | ")}`;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+  }
+
+  const fallback = selectUniqueWindowByTitle(finalWindows, titleHints);
+  if (fallback.match) {
+    return {
+      matchedWindow: fallback.match,
+      finalWindows,
+      newCandidates,
+      reason: `${fallback.reason} after timeout`,
+    };
+  }
+
+  return {
+    matchedWindow: null,
+    finalWindows,
+    newCandidates,
+    reason: `${lastReason}; ${fallback.reason}`,
+  };
+}
+
 export async function callTool(
   toolName: string,
   args: Record<string, unknown>
@@ -342,13 +455,16 @@ export async function callTool(
         }
       }
 
-      if (cfg.extension === "claude-code") {
+      if (cfg.extension === "claude-code" || cfg.extension === "codex") {
         const port = getCdpPort();
         if (port) {
-          const result = await sendViaCdp(port, prompt);
+          const result = await sendViaAgentCdp(port, prompt, {
+            agent: cfg.extension,
+            windowTitle: cfg.windowTitle,
+          });
           if (result.success) {
             connectionManager.updateConnectionStatus(connection.id, "active");
-            return textResult(`Sent to ${connection.name} via CDP (background)`);
+            return textResult(`Sent to ${connection.name} via ${cfg.extension} CDP (background)`);
           }
         }
       }
@@ -409,16 +525,19 @@ export async function callTool(
             }
             client.sendTaskMessage(promptTask.prompt);
             results.push(`Sent to ${connection.name} (background)`);
-          } else if (cfg.extension === "claude-code") {
+          } else if (cfg.extension === "claude-code" || cfg.extension === "codex") {
             const port = getCdpPort();
             if (!port) {
               throw new Error("CDP port not available");
             }
-            const cdpResult = await sendViaCdp(port, promptTask.prompt);
+            const cdpResult = await sendViaAgentCdp(port, promptTask.prompt, {
+              agent: cfg.extension,
+              windowTitle: cfg.windowTitle,
+            });
             if (!cdpResult.success) {
               throw new Error(cdpResult.error || "CDP failed");
             }
-            results.push(`Sent to ${connection.name} (CDP)`);
+            results.push(`Sent to ${connection.name} (${cfg.extension} CDP)`);
           } else {
             throw new Error("No background method available");
           }
@@ -473,12 +592,41 @@ export async function callTool(
           .join(", ");
         return textResult(`Slot "${slotKey}" not found. Available: ${available}`, true);
       }
-      const winTitle = args.windowTitle as string | undefined;
-      const result = await layoutManager.applySlot(slot.id, winTitle);
+      const target: LayoutTarget = {
+        windowTitle:
+          typeof args.windowTitle === "string" ? args.windowTitle.trim() || undefined : undefined,
+        windowHandle: parseWindowHandle(args.windowHandle),
+      };
+
+      logToolEvent("apply_layout request", {
+        slot: slot.letter,
+        slotName: slot.name,
+        target,
+      });
+
+      const result = await layoutManager.applySlot(slot.id, target);
+      logToolEvent("apply_layout result", {
+        slot: slot.letter,
+        slotName: slot.name,
+        success: result.success,
+        error: result.error,
+        logPath: result.logPath,
+        target,
+      });
+
       return textResult(
-        result.success
-          ? `Applied layout slot ${slot.letter}: ${slot.name}`
-          : `Failed: ${result.error}`,
+        JSON.stringify(
+          {
+            success: result.success,
+            slot: { id: slot.id, letter: slot.letter, name: slot.name },
+            target,
+            logPath: result.logPath,
+            error: result.error,
+            exitCode: result.exitCode ?? null,
+          },
+          null,
+          2
+        ),
         !result.success
       );
     }
@@ -503,32 +651,122 @@ export async function callTool(
         return textResult(`Slot "${slotKey}" not found. Available: ${available}`, true);
       }
 
+      const baselineWindows = await detectWindows();
+      const titleHints = buildSpawnTitleHints({
+        folderPath: resolved.folderPath,
+        windowName: resolved.windowName,
+      });
+
+      logToolEvent("spawn_and_layout baseline", {
+        requestedTarget: typeof args.target === "string" ? args.target : null,
+        requestedFolderPath: resolved.folderPath,
+        requestedWindowName: resolved.windowName ?? null,
+        slot: slot.letter,
+        slotName: slot.name,
+        titleHints,
+        baselineHandles: baselineWindows.map(formatWindowSummary),
+      });
+
       const spawnResult = await spawnWindow(resolved.folderPath, resolved.windowName);
       if (!spawnResult.success) {
-        return textResult(`Failed to spawn: ${spawnResult.message}`, true);
+        logToolEvent("spawn_and_layout spawn failed", {
+          requestedFolderPath: resolved.folderPath,
+          slot: slot.letter,
+          message: spawnResult.message,
+        });
+        return textResult(
+          JSON.stringify(
+            {
+              success: false,
+              stage: "spawn",
+              requestedFolderPath: resolved.folderPath,
+              requestedWindowName: resolved.windowName ?? null,
+              slot: { id: slot.id, letter: slot.letter, name: slot.name },
+              error: spawnResult.message,
+            },
+            null,
+            2
+          ),
+          true
+        );
       }
 
-      await new Promise((resolve) => setTimeout(resolve, 5000));
+      const selection = await waitForSpawnedWindow(baselineWindows, titleHints);
+      logToolEvent("spawn_and_layout window selection", {
+        requestedFolderPath: resolved.folderPath,
+        slot: slot.letter,
+        reason: selection.reason,
+        candidateHandles: selection.newCandidates.map(formatWindowSummary),
+        finalHandles: selection.finalWindows.map(formatWindowSummary),
+        matchedWindow: selection.matchedWindow
+          ? formatWindowSummary(selection.matchedWindow)
+          : null,
+      });
 
-      const folderName =
-        resolved.folderPath
-          .replace(/\\/g, "/")
-          .split("/")
-          .filter(Boolean)
-          .pop() || "";
-      const windowTitle = folderName;
-      const layoutResult = await layoutManager.applySlot(slot.id, windowTitle);
+      if (!selection.matchedWindow) {
+        return textResult(
+          JSON.stringify(
+            {
+              success: false,
+              stage: "select_window",
+              requestedFolderPath: resolved.folderPath,
+              requestedWindowName: resolved.windowName ?? null,
+              slot: { id: slot.id, letter: slot.letter, name: slot.name },
+              titleHints,
+              baselineHandles: baselineWindows.map(formatWindowSummary),
+              candidateHandles: selection.newCandidates.map(formatWindowSummary),
+              finalHandles: selection.finalWindows.map(formatWindowSummary),
+              error: `Unable to isolate a unique spawned VS Code window: ${selection.reason}`,
+            },
+            null,
+            2
+          ),
+          true
+        );
+      }
+
+      const target: LayoutTarget = {
+        windowHandle: selection.matchedWindow.handle,
+        windowTitle: selection.matchedWindow.title,
+      };
+      const layoutResult = await layoutManager.applySlot(slot.id, target);
+
+      logToolEvent("spawn_and_layout layout result", {
+        requestedFolderPath: resolved.folderPath,
+        slot: slot.letter,
+        target,
+        success: layoutResult.success,
+        error: layoutResult.error,
+        logPath: layoutResult.logPath,
+      });
 
       return textResult(
-        layoutResult.success
-          ? `Spawned ${resolved.label} and applied slot ${slot.letter}: ${slot.name}`
-          : `Spawned ${resolved.label} but layout failed: ${layoutResult.error}`,
+        JSON.stringify(
+          {
+            success: layoutResult.success,
+            requestedFolderPath: resolved.folderPath,
+            requestedWindowName: resolved.windowName ?? null,
+            spawnTargetLabel: resolved.label,
+            slot: { id: slot.id, letter: slot.letter, name: slot.name },
+            titleHints,
+            baselineHandles: baselineWindows.map(formatWindowSummary),
+            candidateHandles: selection.newCandidates.map(formatWindowSummary),
+            finalHandles: selection.finalWindows.map(formatWindowSummary),
+            matchedWindow: selection.matchedWindow,
+            selectionReason: selection.reason,
+            logPath: layoutResult.logPath,
+            exitCode: layoutResult.exitCode ?? null,
+            error: layoutResult.error,
+          },
+          null,
+          2
+        ),
         !layoutResult.success
       );
     }
 
     case "detect_windows": {
-      return textResult(JSON.stringify(detectWindows(), null, 2));
+      return textResult(JSON.stringify(await detectWindows(), null, 2));
     }
 
     case "check_cdp": {
