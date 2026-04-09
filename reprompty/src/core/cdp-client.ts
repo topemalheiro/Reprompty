@@ -477,10 +477,13 @@ function getSendScript(agent: Exclude<AgentKind, "unknown">, message: string) {
         var input = doc.querySelector('textarea');
         if (!input) input = doc.querySelector('[role="textbox"]');
         if (!input) return 'input_not_found';
+        var setValue = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set;
+        if (!setValue) return 'no_value_setter';
         input.focus();
-        input.value = ${escapedMessage};
-        input.dispatchEvent(new InputEvent('input', { bubbles: true, data: ${escapedMessage}, inputType: 'insertText' }));
-        input.dispatchEvent(new Event('change', { bubbles: true }));
+        setValue.call(input, ${escapedMessage});
+        input.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, data: ${escapedMessage}, inputType: 'insertText' }));
+        input.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, data: ${escapedMessage}, inputType: 'insertText' }));
+        input.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
         return 'injected';
       })()
       `,
@@ -492,6 +495,15 @@ function getSendScript(agent: Exclude<AgentKind, "unknown">, message: string) {
         var input = doc.querySelector('textarea');
         if (!input) input = doc.querySelector('[role="textbox"]');
         if (!input) return 'no_input';
+        var sendButton = Array.from(doc.querySelectorAll('button')).find(function (button) {
+          if (button.disabled) return false;
+          var label = (button.getAttribute('aria-label') || button.textContent || '').toLowerCase();
+          return label.includes('send');
+        });
+        if (sendButton) {
+          sendButton.click();
+          return 'sent_button';
+        }
         input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
         input.dispatchEvent(new KeyboardEvent('keypress', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
         input.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
