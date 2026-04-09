@@ -10,16 +10,24 @@
  * 
  * Example:
  *   const skill = createRepromptySkill();
- *   await skill.spawn_window({ folderPath: "/path/to/project" });
+ *   await skill.list_spawn_targets();
+ *   await skill.spawn_window({ target: "windows-project" });
  *   await skill.add_connection({ type: "vscode-window", name: "agent-1", config: { socketPath: "\\\\.\\pipe\\kilo-ipc-12345", method: "background" } });
  *   await skill.send_prompt({ connectionId: "agent-1", prompt: "Write a hello world function" });
  */
 
 import { runMCPTool } from "../src/mcp/index.js";
 
-export interface SpawnWindowParams {
+export type SpawnWindowParams =
+  | { target: string; windowName?: string }
+  | { folderPath: string; windowName?: string };
+
+export interface SpawnTargetInfo {
+  id: string;
+  label: string;
   folderPath: string;
   windowName?: string;
+  addedAt: string;
 }
 
 export interface SendPromptParams {
@@ -52,6 +60,13 @@ export interface DaisyChainParams {
 export const RepromptySkill = {
   name: "reprompty",
   description: "Multi-window AI agent orchestration framework",
+
+  /**
+   * List saved spawn targets (token-friendly aliases for folder paths)
+   */
+  async list_spawn_targets(): Promise<string> {
+    return runMCPTool("list_spawn_targets", {});
+  },
 
   /**
    * Spawn a new VS Code window
@@ -113,8 +128,9 @@ export const RepromptySkill = {
     return `
 Example usage:
 
-1. Spawn a window:
-   await reprompty.spawn_window({ folderPath: "C:/my-project" });
+1. List targets + spawn a window using an alias:
+   await reprompty.list_spawn_targets();
+   await reprompty.spawn_window({ target: "windows-project" });
 
 2. Add a connection:
    await reprompty.add_connection({

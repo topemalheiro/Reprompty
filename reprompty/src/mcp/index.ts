@@ -1,14 +1,15 @@
 import {
   connectionManager,
-  ConnectionType,
-  ConnectionConfig,
-  VSCodeWindowConfig,
+  type ConnectionType,
+  type ConnectionConfig,
+  type VSCodeWindowConfig,
 } from "../core/connection-manager.js";
 import { getOrCreateIpcClient } from "../core/ipc-client.js";
-import { spawnWindow, findWindowByTitle, detectWindows, getCdpPort } from "../platform/windows.js";
-import { sendViaCdp, isCdpAvailable } from "../core/cdp-client.js";
 import { scriptManager } from "../core/script-manager.js";
 import { layoutManager } from "../core/layout-manager.js";
+import { spawnTargetManager } from "../core/spawn-target-manager.js";
+import { spawnWindow, detectWindows, getCdpPort } from "../platform/windows.js";
+import { sendViaCdp, isCdpAvailable } from "../core/cdp-client.js";
 
 export interface MCPTool {
   name: string;
@@ -22,18 +23,27 @@ export interface MCPResource {
   description: string;
 }
 
-// MCP Tools
-export const tools: MCPTool[] = [
+type ToolResult = { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+const BUILT_IN_TOOLS: MCPTool[] = [
   {
     name: "spawn_window",
-    description: "Spawn a new VS Code window with a project folder",
+    description: "Spawn a new VS Code window using a saved target alias or a raw project folder",
     inputSchema: {
       type: "object",
       properties: {
+        target: { type: "string", description: "Saved spawn target alias" },
         folderPath: { type: "string", description: "Path to the project folder" },
         windowName: { type: "string", description: "Optional name for the window" },
       },
-      required: ["folderPath"],
+    },
+  },
+  {
+    name: "list_spawn_targets",
+    description: "List all saved spawn target aliases for opening VS Code windows",
+    inputSchema: {
+      type: "object",
+      properties: {},
     },
   },
   {
@@ -44,7 +54,10 @@ export const tools: MCPTool[] = [
       properties: {
         connectionId: { type: "string", description: "ID of the connection to send to" },
         prompt: { type: "string", description: "The prompt to send" },
-        waitForResponse: { type: "boolean", description: "Wait for response (not implemented yet)" },
+        waitForResponse: {
+          type: "boolean",
+          description: "Wait for response (not implemented yet)",
+        },
         timeout: { type: "number", description: "Timeout in milliseconds" },
       },
       required: ["connectionId", "prompt"],
@@ -56,19 +69,23 @@ export const tools: MCPTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        type: { 
-          type: "string", 
+        type: {
+          type: "string",
           enum: ["vscode-window", "vscode-cli", "http-api", "websocket"],
-          description: "Type of connection" 
+          description: "Type of connection",
         },
         name: { type: "string", description: "Name for this connection" },
-        config: { 
-          type: "object", 
+        config: {
+          type: "object",
           description: "Connection configuration",
           properties: {
             socketPath: { type: "string", description: "IPC socket path" },
             windowTitle: { type: "string", description: "Window title to find" },
-            method: { type: "string", enum: ["foreground", "background"], description: "Send method" },
+            method: {
+              type: "string",
+              enum: ["foreground", "background"],
+              description: "Send method",
+            },
             folderPath: { type: "string", description: "Folder path for CLI" },
             url: { type: "string", description: "URL for HTTP/WebSocket" },
           },
@@ -150,19 +167,25 @@ export const tools: MCPTool[] = [
   },
   {
     name: "apply_layout",
-    description: "Apply a layout slot to position/resize the active VS Code window. Use slot letter (A, B) or slot name.",
+    description: "Apply a layout slot to position or resize the active VS Code window",
     inputSchema: {
       type: "object",
       properties: {
-        slot: { type: "string", description: "Slot letter (A, B) or slot name (e.g. 'Dual Bottom')" },
-        windowTitle: { type: "string", description: "Optional: target a specific window by title substring" },
+        slot: {
+          type: "string",
+          description: "Slot letter (A, B) or slot name (for example 'Dual Bottom')",
+        },
+        windowTitle: {
+          type: "string",
+          description: "Optional: target a specific window by title substring",
+        },
       },
       required: ["slot"],
     },
   },
   {
     name: "list_layout_slots",
-    description: "List all available layout slots with their configurations (position, size, hotkey)",
+    description: "List all available layout slots with their configurations",
     inputSchema: {
       type: "object",
       properties: {},
@@ -170,19 +193,24 @@ export const tools: MCPTool[] = [
   },
   {
     name: "spawn_and_layout",
-    description: "Spawn a new VS Code window for a project folder and apply a layout slot to position it",
+    description: "Spawn a new VS Code window from a target or folder path and apply a layout slot",
     inputSchema: {
       type: "object",
       properties: {
+        target: { type: "string", description: "Saved spawn target alias" },
         folderPath: { type: "string", description: "Path to the project folder" },
-        slot: { type: "string", description: "Layout slot letter (A, B) or name to apply after spawning" },
+        windowName: { type: "string", description: "Optional name for the window" },
+        slot: {
+          type: "string",
+          description: "Layout slot letter (A, B) or name to apply after spawning",
+        },
       },
-      required: ["folderPath", "slot"],
+      required: ["slot"],
     },
   },
   {
     name: "detect_windows",
-    description: "Auto-detect all VS Code and Kilo Code windows with their PIDs, titles, and IPC pipe availability",
+    description: "Auto-detect all VS Code and Kilo Code windows with their PIDs and capabilities",
     inputSchema: {
       type: "object",
       properties: {},
@@ -198,100 +226,176 @@ export const tools: MCPTool[] = [
   },
 ];
 
-// Tool implementations
+function textResult(text: string, isError = false): ToolResult {
+  return {
+    content: [{ type: "text", text }],
+    ...(isError ? { isError: true } : {}),
+  };
+}
+
+function getGeneratedTools(): MCPTool[] {
+  return scriptManager.listGeneratedMcpTools().map((registration) => ({
+    name: registration.action.toolName,
+    description:
+      registration.action.description ||
+      `Run ${registration.action.label} from ${registration.scriptName}`,
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+  }));
+}
+
+export function getTools(): MCPTool[] {
+  return [...BUILT_IN_TOOLS, ...getGeneratedTools()];
+}
+
+function resolveSpawnInput(args: Record<string, unknown>):
+  | { folderPath: string; windowName?: string; label: string }
+  | { error: string } {
+  const target = typeof args.target === "string" ? args.target.trim() : "";
+  const explicitFolderPath =
+    typeof args.folderPath === "string" ? args.folderPath.trim() : "";
+  const explicitWindowName =
+    typeof args.windowName === "string" ? args.windowName.trim() : "";
+
+  if (target) {
+    const savedTarget = spawnTargetManager.getTarget(target);
+    if (!savedTarget) {
+      return { error: `Spawn target "${target}" not found` };
+    }
+    return {
+      folderPath: savedTarget.folderPath,
+      windowName: explicitWindowName || savedTarget.windowName,
+      label: `${savedTarget.label} (${savedTarget.id})`,
+    };
+  }
+
+  if (!explicitFolderPath) {
+    return { error: 'Provide either "target" or "folderPath"' };
+  }
+
+  return {
+    folderPath: explicitFolderPath,
+    windowName: explicitWindowName || undefined,
+    label: explicitFolderPath,
+  };
+}
+
+function resolveLayoutSlot(slotKey: string) {
+  return (
+    layoutManager.getSlotByLetter(slotKey) ??
+    layoutManager
+      .listSlots()
+      .find((slot) => slot.name.toLowerCase() === slotKey.toLowerCase())
+  );
+}
+
 export async function callTool(
-  toolName: string, 
+  toolName: string,
   args: Record<string, unknown>
-): Promise<{ content: Array<{ type: string; text: string }> }> {
+): Promise<ToolResult> {
   switch (toolName) {
     case "spawn_window": {
-      const folderPath = args.folderPath as string;
-      const windowName = args.windowName as string | undefined;
-      const result = await spawnWindow(folderPath, windowName);
-      return { content: [{ type: "text", text: JSON.stringify(result) }] };
+      const resolved = resolveSpawnInput(args);
+      if ("error" in resolved) {
+        return textResult(resolved.error, true);
+      }
+      const result = await spawnWindow(resolved.folderPath, resolved.windowName);
+      return textResult(JSON.stringify(result, null, 2), !result.success);
+    }
+
+    case "list_spawn_targets": {
+      return textResult(JSON.stringify(spawnTargetManager.listTargets(), null, 2));
     }
 
     case "send_prompt": {
       const connectionId = args.connectionId as string;
       const prompt = args.prompt as string;
-
-      // Allow lookup by name or ID
       const connection =
         connectionManager.getConnection(connectionId) ||
         connectionManager.getConnectionByName(connectionId);
+
       if (!connection) {
-        return { content: [{ type: "text", text: `Error: Connection "${connectionId}" not found` }] };
+        return textResult(`Error: Connection "${connectionId}" not found`, true);
       }
 
       const cfg = connection.config as VSCodeWindowConfig;
 
-      // Background IPC pipe (Kilo Code)
       if (cfg.method === "background" && cfg.socketPath) {
         try {
           const client = getOrCreateIpcClient(cfg.socketPath);
           const ready = await client.waitForReady();
           if (!ready) {
             connectionManager.updateConnectionStatus(connection.id, "error");
-            return { content: [{ type: "text", text: `Error: IPC not ready for ${connection.name} (timeout)` }] };
+            return textResult(
+              `Error: IPC not ready for ${connection.name} (timeout)`,
+              true
+            );
           }
           client.sendTaskMessage(prompt);
           connectionManager.updateConnectionStatus(connection.id, "active");
-          return { content: [{ type: "text", text: `Sent to ${connection.name} via background IPC` }] };
+          return textResult(`Sent to ${connection.name} via background IPC`);
         } catch (err) {
           connectionManager.updateConnectionStatus(connection.id, "error");
-          return { content: [{ type: "text", text: `Error sending to ${connection.name}: ${err}` }] };
+          return textResult(`Error sending to ${connection.name}: ${err}`, true);
         }
       }
 
-      // CDP background (Claude Code)
       if (cfg.extension === "claude-code") {
         const port = getCdpPort();
         if (port) {
           const result = await sendViaCdp(port, prompt);
           if (result.success) {
             connectionManager.updateConnectionStatus(connection.id, "active");
-            return { content: [{ type: "text", text: `Sent to ${connection.name} via CDP (background)` }] };
+            return textResult(`Sent to ${connection.name} via CDP (background)`);
           }
-          // CDP failed, fall through to foreground
         }
       }
 
-      return { content: [{ type: "text", text: `No background method available for ${connection.name}. Use foreground from Reprompty UI.` }] };
+      return textResult(
+        `No background method available for ${connection.name}. Use foreground from Reprompty UI.`,
+        true
+      );
     }
 
     case "add_connection": {
       const type = args.type as ConnectionType;
       const name = args.name as string;
       const config = args.config as ConnectionConfig;
-      
       const connection = connectionManager.addConnection(type, name, config);
-      return { content: [{ type: "text", text: `Added connection: ${connection.id} (${connection.name})` }] };
+      return textResult(`Added connection: ${connection.id} (${connection.name})`);
     }
 
     case "list_connections": {
-      const connections = connectionManager.listConnections();
-      return { content: [{ type: "text", text: JSON.stringify(connections, null, 2) }] };
+      return textResult(JSON.stringify(connectionManager.listConnections(), null, 2));
     }
 
     case "remove_connection": {
       const connectionId = args.connectionId as string;
       const removed = connectionManager.removeConnection(connectionId);
-      return { content: [{ type: "text", text: removed ? `Removed connection ${connectionId}` : `Connection ${connectionId} not found` }] };
+      return textResult(
+        removed
+          ? `Removed connection ${connectionId}`
+          : `Connection ${connectionId} not found`,
+        !removed
+      );
     }
 
     case "daisy_chain": {
       const prompts = args.prompts as Array<{ connectionId: string; prompt: string }>;
       const continueOnError = (args.continueOnError as boolean) || false;
-
       const results: string[] = [];
 
-      for (const p of prompts) {
+      for (const promptTask of prompts) {
         const connection =
-          connectionManager.getConnection(p.connectionId) ||
-          connectionManager.getConnectionByName(p.connectionId);
+          connectionManager.getConnection(promptTask.connectionId) ||
+          connectionManager.getConnectionByName(promptTask.connectionId);
         if (!connection) {
-          results.push(`Connection "${p.connectionId}" not found`);
-          if (!continueOnError) break;
+          results.push(`Connection "${promptTask.connectionId}" not found`);
+          if (!continueOnError) {
+            break;
+          }
           continue;
         }
 
@@ -300,153 +404,176 @@ export async function callTool(
           if (cfg.method === "background" && cfg.socketPath) {
             const client = getOrCreateIpcClient(cfg.socketPath);
             const ready = await client.waitForReady();
-            if (!ready) throw new Error("IPC not ready");
-            client.sendTaskMessage(p.prompt);
+            if (!ready) {
+              throw new Error("IPC not ready");
+            }
+            client.sendTaskMessage(promptTask.prompt);
             results.push(`Sent to ${connection.name} (background)`);
           } else if (cfg.extension === "claude-code") {
             const port = getCdpPort();
-            if (port) {
-              const cdpResult = await sendViaCdp(port, p.prompt);
-              if (cdpResult.success) {
-                results.push(`Sent to ${connection.name} (CDP)`);
-              } else {
-                throw new Error(cdpResult.error || "CDP failed");
-              }
-            } else {
+            if (!port) {
               throw new Error("CDP port not available");
             }
+            const cdpResult = await sendViaCdp(port, promptTask.prompt);
+            if (!cdpResult.success) {
+              throw new Error(cdpResult.error || "CDP failed");
+            }
+            results.push(`Sent to ${connection.name} (CDP)`);
           } else {
             throw new Error("No background method available");
           }
         } catch (err) {
           results.push(`Failed: ${connection.name} - ${err}`);
-          if (!continueOnError) break;
+          if (!continueOnError) {
+            break;
+          }
         }
       }
 
-      return { content: [{ type: "text", text: results.join("\n") }] };
+      return textResult(results.join("\n"));
     }
 
     case "list_scripts": {
-      const scripts = scriptManager.listScripts();
-      return { content: [{ type: "text", text: JSON.stringify(scripts, null, 2) }] };
+      return textResult(JSON.stringify(scriptManager.listScripts(), null, 2));
     }
 
     case "run_script": {
       const scriptId = args.scriptId as string;
       const script = scriptManager.findByIdOrName(scriptId);
       if (!script) {
-        return { content: [{ type: "text", text: `Script not found: ${scriptId}` }] };
+        return textResult(`Script not found: ${scriptId}`, true);
       }
       const started = scriptManager.runScript(script.id);
-      return { content: [{ type: "text", text: started ? `Started: ${script.name}` : `Failed to start: ${script.name}` }] };
+      return textResult(
+        started ? `Started: ${script.name}` : `Failed to start: ${script.name}`,
+        !started
+      );
     }
 
     case "stop_script": {
       const scriptId = args.scriptId as string;
       const script = scriptManager.findByIdOrName(scriptId);
       if (!script) {
-        return { content: [{ type: "text", text: `Script not found: ${scriptId}` }] };
+        return textResult(`Script not found: ${scriptId}`, true);
       }
       const stopped = scriptManager.stopScript(script.id);
-      return { content: [{ type: "text", text: stopped ? `Stopped: ${script.name}` : `Failed to stop: ${script.name}` }] };
+      return textResult(
+        stopped ? `Stopped: ${script.name}` : `Failed to stop: ${script.name}`,
+        !stopped
+      );
     }
 
     case "apply_layout": {
       const slotKey = args.slot as string;
-      // Try by letter first, then by name
-      const slot = layoutManager.getSlotByLetter(slotKey) ??
-        layoutManager.listSlots().find((s) => s.name.toLowerCase() === slotKey.toLowerCase());
+      const slot = resolveLayoutSlot(slotKey);
       if (!slot) {
-        const available = layoutManager.listSlots().map((s) => `${s.letter}: ${s.name}`).join(", ");
-        return { content: [{ type: "text", text: `Slot "${slotKey}" not found. Available: ${available}` }] };
+        const available = layoutManager
+          .listSlots()
+          .map((item) => `${item.letter}: ${item.name}`)
+          .join(", ");
+        return textResult(`Slot "${slotKey}" not found. Available: ${available}`, true);
       }
       const winTitle = args.windowTitle as string | undefined;
       const result = await layoutManager.applySlot(slot.id, winTitle);
-      return { content: [{ type: "text", text: result.success ? `Applied layout slot ${slot.letter}: ${slot.name}` : `Failed: ${result.error}` }] };
+      return textResult(
+        result.success
+          ? `Applied layout slot ${slot.letter}: ${slot.name}`
+          : `Failed: ${result.error}`,
+        !result.success
+      );
     }
 
     case "list_layout_slots": {
-      const slots = layoutManager.listSlots();
-      return { content: [{ type: "text", text: JSON.stringify(slots, null, 2) }] };
+      return textResult(JSON.stringify(layoutManager.listSlots(), null, 2));
     }
 
     case "spawn_and_layout": {
-      const folderPath = args.folderPath as string;
+      const resolved = resolveSpawnInput(args);
+      if ("error" in resolved) {
+        return textResult(resolved.error, true);
+      }
+
       const slotKey = args.slot as string;
-
-      const slot = layoutManager.getSlotByLetter(slotKey) ??
-        layoutManager.listSlots().find((s) => s.name.toLowerCase() === slotKey.toLowerCase());
+      const slot = resolveLayoutSlot(slotKey);
       if (!slot) {
-        const available = layoutManager.listSlots().map((s) => `${s.letter}: ${s.name}`).join(", ");
-        return { content: [{ type: "text", text: `Slot "${slotKey}" not found. Available: ${available}` }] };
+        const available = layoutManager
+          .listSlots()
+          .map((item) => `${item.letter}: ${item.name}`)
+          .join(", ");
+        return textResult(`Slot "${slotKey}" not found. Available: ${available}`, true);
       }
 
-      // Spawn the window
-      const spawnResult = await spawnWindow(folderPath);
+      const spawnResult = await spawnWindow(resolved.folderPath, resolved.windowName);
       if (!spawnResult.success) {
-        return { content: [{ type: "text", text: `Failed to spawn: ${spawnResult.message}` }] };
+        return textResult(`Failed to spawn: ${spawnResult.message}`, true);
       }
 
-      // Wait for the window to initialize, then detect it by folder path
       await new Promise((resolve) => setTimeout(resolve, 5000));
 
-      // Extract folder name from path to use as window title filter
-      const folderName = folderPath.replace(/\\/g, "/").split("/").filter(Boolean).pop() || "";
-
-      // Try to confirm the new window exists, but still fall back to the
-      // folder name so layout targeting does not silently degrade if detection
-      // is slow on a busy system.
-      const windows = detectWindows();
-      windows.find((w) =>
-        w.title.toLowerCase().includes(folderName.toLowerCase()) &&
-        w.title.includes("Visual Studio Code")
-      );
+      const folderName =
+        resolved.folderPath
+          .replace(/\\/g, "/")
+          .split("/")
+          .filter(Boolean)
+          .pop() || "";
       const windowTitle = folderName;
-
       const layoutResult = await layoutManager.applySlot(slot.id, windowTitle);
-      return {
-        content: [{
-          type: "text",
-          text: layoutResult.success
-            ? `Spawned ${folderPath} and applied slot ${slot.letter}: ${slot.name}`
-            : `Spawned ${folderPath} but layout failed: ${layoutResult.error}`,
-        }],
-      };
+
+      return textResult(
+        layoutResult.success
+          ? `Spawned ${resolved.label} and applied slot ${slot.letter}: ${slot.name}`
+          : `Spawned ${resolved.label} but layout failed: ${layoutResult.error}`,
+        !layoutResult.success
+      );
     }
 
     case "detect_windows": {
-      const windows = detectWindows();
-      return { content: [{ type: "text", text: JSON.stringify(windows, null, 2) }] };
+      return textResult(JSON.stringify(detectWindows(), null, 2));
     }
 
     case "check_cdp": {
       const port = getCdpPort();
       if (!port) {
-        return { content: [{ type: "text", text: JSON.stringify({ available: false, reason: "DevToolsActivePort not found" }) }] };
+        return textResult(
+          JSON.stringify(
+            { available: false, reason: "DevToolsActivePort not found" },
+            null,
+            2
+          ),
+          true
+        );
       }
       const available = await isCdpAvailable(port);
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify({
+      return textResult(
+        JSON.stringify(
+          {
             available,
             port,
             claudeCodeWebview: available,
-            reason: available ? "Claude Code webview found" : "Claude Code webview not found among CDP targets",
-          }, null, 2),
-        }],
-      };
+            reason: available
+              ? "Claude Code webview found"
+              : "Claude Code webview not found among CDP targets",
+          },
+          null,
+          2
+        ),
+        !available
+      );
     }
 
-    default:
-      return { content: [{ type: "text", text: `Unknown tool: ${toolName}` }] };
+    default: {
+      const generatedTool = scriptManager.findGeneratedMcpTool(toolName);
+      if (generatedTool) {
+        const result = await scriptManager.runGeneratedMcpTool(toolName);
+        return textResult(JSON.stringify(result, null, 2), !result.success);
+      }
+      return textResult(`Unknown tool: ${toolName}`, true);
+    }
   }
 }
 
-// Simple MCP server that can be invoked
 export async function runMCPTool(
-  toolName: string, 
+  toolName: string,
   args: Record<string, unknown>
 ): Promise<string> {
   const result = await callTool(toolName, args);
@@ -454,4 +581,4 @@ export async function runMCPTool(
 }
 
 console.log("Reprompty MCP server loaded");
-console.log("Available tools:", tools.map(t => t.name).join(", "));
+console.log("Available tools:", getTools().map((tool) => tool.name).join(", "));

@@ -6,7 +6,7 @@
  * Register: claude mcp add reprompty -- npx tsx path/to/server.ts
  */
 
-import { tools, callTool } from "./index.js";
+import { getTools, callTool } from "./index.js";
 
 // ============================================================================
 // Stdio MCP Server (JSON-RPC over stdin/stdout)
@@ -77,6 +77,8 @@ async function handleMessage(msg: { id?: string | number; method?: string; param
       break;
 
     case "tools/list":
+      {
+      const tools = getTools();
       sendResult(id!, {
         tools: tools.map((t) => ({
           name: t.name,
@@ -84,6 +86,7 @@ async function handleMessage(msg: { id?: string | number; method?: string; param
           inputSchema: t.inputSchema,
         })),
       });
+      }
       break;
 
     case "tools/call": {
@@ -121,4 +124,4 @@ console.error = console.log;
 console.warn = console.log;
 
 console.log("[Reprompty MCP] Server started on stdio");
-console.log("[Reprompty MCP] Tools:", tools.map((t) => t.name).join(", "));
+console.log("[Reprompty MCP] Tools:", getTools().map((t) => t.name).join(", "));
