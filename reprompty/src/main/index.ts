@@ -259,7 +259,7 @@ electron.app.whenReady().then(() => {
   setInterval(async () => {
     try {
       const { detectWindows } = await import("../platform/windows.js");
-      const windows = detectWindows();
+      const windows = await detectWindows();
       mainWindow?.webContents?.send("windows-detected", windows);
     } catch {
       // Ignore detection errors during polling
@@ -281,11 +281,14 @@ electron.app.on("activate", () => {
 
 // IPC handlers for MCP tools
 electron.ipcMain.handle("run-mcp-tool", async (_event: any, toolName: string, args: Record<string, unknown>) => {
+  console.log("[IPC] run-mcp-tool request:", toolName, args);
   if (!runMCPTool) {
     const mcpModule = await import("../mcp/index.js");
     runMCPTool = mcpModule.runMCPTool;
   }
-  return runMCPTool(toolName, args);
+  const result = await runMCPTool(toolName, args);
+  console.log("[IPC] run-mcp-tool result:", toolName, result);
+  return result;
 });
 
 // ============================================================================
@@ -329,7 +332,7 @@ electron.ipcMain.handle("remove-connection", async (_event: any, id: string) => 
 electron.ipcMain.handle("detect-windows", async () => {
   try {
     const { detectWindows } = await import("../platform/windows.js");
-    return detectWindows();
+    return await detectWindows();
   } catch (err) {
     console.error("[IPC] detect-windows error:", err);
     return [];
@@ -349,10 +352,12 @@ electron.ipcMain.handle("send-to-detected", async (_event: any, args: { window: 
     try { fs.appendFileSync(nodePath.join(process.env.USERPROFILE || ".", "reprompty-cdp-debug.log"), `${new Date().toISOString()} ${msg}\n`); } catch {}
   };
 
-  dbg(`send-to-detected called: extension=${win.extension} pipePath=${win.pipePath} handle=${win.handle}`);
+  dbg(
+    `send-to-detected called: activeAgent=${win.activeAgent} backgroundRoute=${win.backgroundRoute} pipePath=${win.pipePath} handle=${win.handle}`
+  );
 
   // Try background IPC pipe (Kilo Code)
-  if (win.pipePath) {
+  if (win.backgroundRoute === "ipc-kilo" && win.pipePath) {
     try {
       const client = getOrCreateIpcClient(win.pipePath);
       const ready = await client.waitForReady();
@@ -365,8 +370,8 @@ electron.ipcMain.handle("send-to-detected", async (_event: any, args: { window: 
     }
   }
 
-  // Try CDP (Claude Code)
-  if (win.extension === "claude-code" || !win.pipePath) {
+  // Try CDP for the currently active side-panel agent
+  if (win.backgroundRoute === "cdp-claude" || win.backgroundRoute === "cdp-codex") {
     try {
       dbg("Trying CDP...");
       const { getCdpPort } = await import("../platform/windows.js");
@@ -374,12 +379,15 @@ electron.ipcMain.handle("send-to-detected", async (_event: any, args: { window: 
       dbg(`CDP port: ${port}`);
       if (port) {
         dbg("Importing cdp-client...");
-        const { sendViaCdp } = await import("../core/cdp-client.js");
-        dbg("sendViaCdp imported, calling...");
-        const result = await sendViaCdp(port, prompt, win.title);
+        const { sendViaAgentCdp } = await import("../core/cdp-client.js");
+        dbg(`sendViaAgentCdp imported, calling for ${win.activeAgent}...`);
+        const result = await sendViaAgentCdp(port, prompt, {
+          agent: win.activeAgent,
+          windowTitle: win.title,
+        });
         dbg(`CDP result: ${JSON.stringify(result)}`);
         if (result.success) {
-          return { success: true, method: "background-cdp" };
+          return { success: true, method: win.backgroundRoute };
         }
         dbg("CDP send returned failure, falling through");
       } else {
@@ -390,7 +398,13 @@ electron.ipcMain.handle("send-to-detected", async (_event: any, args: { window: 
     }
   }
 
-  return { success: false, error: "CDP send failed - no foreground fallback" };
+  return {
+    success: false,
+    error:
+      win.activeAgent === "unknown"
+        ? "No active side-panel agent could be resolved for this window"
+        : `No background route available for active agent ${win.activeAgent}`,
+  };
 });
 
 electron.ipcMain.handle("spawn-window", async (_event: any, args: { folderPath: string; windowName?: string }) => {

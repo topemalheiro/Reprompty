@@ -1,6 +1,11 @@
 import { execSync } from "node:child_process";
 import fs from "node:fs";
 import nodePath from "node:path";
+import {
+  findWindowAgentState,
+  getWindowAgentStates,
+  type AgentKind,
+} from "../core/cdp-client.js";
 
 export interface WindowInfo {
   pid: number;
@@ -299,9 +304,29 @@ export interface DetectedWindow {
   title: string;
   folderPath: string;
   processName: string;
-  extension: "kilo-code" | "claude-code" | "unknown";
+  extension: AgentKind;
+  activeAgent: AgentKind;
+  availableAgents: Array<Exclude<AgentKind, "unknown">>;
+  backgroundRoute: "ipc-kilo" | "cdp-claude" | "cdp-codex" | "foreground";
   pipePath: string | null;
   sendMethod: "background" | "foreground";
+}
+
+export function resolveBackgroundRoute(
+  activeAgent: AgentKind,
+  availableAgents: Array<Exclude<AgentKind, "unknown">>,
+  pipeExists: boolean
+): DetectedWindow["backgroundRoute"] {
+  if (activeAgent === "kilo-code" && pipeExists) {
+    return "ipc-kilo";
+  }
+  if (activeAgent === "claude-code" && availableAgents.includes("claude-code")) {
+    return "cdp-claude";
+  }
+  if (activeAgent === "codex" && availableAgents.includes("codex")) {
+    return "cdp-codex";
+  }
+  return "foreground";
 }
 
 /**
@@ -309,7 +334,7 @@ export interface DetectedWindow {
  * Enumerates windows via Win32 API, extracts folder from title, probes for IPC pipes.
  * Uses a temp .ps1 file to avoid cmd.exe escaping issues with $ variables.
  */
-export function detectWindows(): DetectedWindow[] {
+export async function detectWindows(): Promise<DetectedWindow[]> {
   try {
     const tempDir = getWritableTempDir();
     const ps1File = nodePath.join(tempDir, "reprompty-detect.ps1");
@@ -375,7 +400,8 @@ $results | ForEach-Object { Write-Output $_ }
     const lines = raw.split("\n").map((l) => l.trim()).filter((l) => l && l !== "True" && l.includes("|"));
     const seen = new Set<number>();
     const results: DetectedWindow[] = [];
-    const cdpAvailable = getCdpPort() !== null;
+    const port = getCdpPort();
+    const agentStates = port ? await getWindowAgentStates(port).catch(() => []) : [];
 
     for (const line of lines) {
       const parts = line.split("|");
@@ -413,14 +439,23 @@ $results | ForEach-Object { Write-Output $_ }
         // Pipe doesn't exist or not accessible
       }
 
-      const extension: DetectedWindow["extension"] = pipeExists
+      const agentState = findWindowAgentState(agentStates, title);
+      const activeAgent = agentState?.activeAgent ?? "unknown";
+      const availableAgents = agentState?.availableAgents ?? [];
+      const legacyExtension: DetectedWindow["extension"] = pipeExists
         ? "kilo-code"
         : isKilo
         ? "kilo-code"
         : "claude-code";
-
+      const backgroundRoute = resolveBackgroundRoute(
+        activeAgent,
+        availableAgents,
+        pipeExists
+      );
       const sendMethod: DetectedWindow["sendMethod"] =
-        pipeExists || cdpAvailable ? "background" : "foreground";
+        backgroundRoute === "foreground" ? "foreground" : "background";
+      const extension: DetectedWindow["extension"] =
+        activeAgent === "unknown" ? legacyExtension : activeAgent;
 
       results.push({
         pid,
@@ -429,6 +464,9 @@ $results | ForEach-Object { Write-Output $_ }
         folderPath,
         processName,
         extension,
+        activeAgent,
+        availableAgents,
+        backgroundRoute,
         pipePath: pipeExists ? pipePath : null,
         sendMethod,
       });

@@ -23,7 +23,24 @@ interface LayoutsConfig {
   slots: LayoutSlot[];
 }
 
-const DEFAULT_SCRIPT_PATH = "C:\\Users\\topem\\scripts\\VSCodeSidePanelLayout\\VSCodeSidePanelLayout.ps1";
+export interface LayoutTarget {
+  windowTitle?: string;
+  windowHandle?: number;
+}
+
+export interface LayoutApplyResult {
+  success: boolean;
+  error?: string;
+  exitCode?: number | null;
+  logPath?: string;
+  windowTitle?: string;
+  windowHandle?: number;
+}
+
+const DEFAULT_SCRIPT_PATH =
+  "C:\\Users\\topem\\scripts\\VSCodeSidePanelLayout\\VSCodeSidePanelLayout.ps1";
+const LAYOUT_LOG_DIR_NAME = "VSCodeSidePanelLayout";
+const LAYOUT_RUN_TIMEOUT_MS = 60000;
 
 const DEFAULT_SLOTS: Omit<LayoutSlot, "id">[] = [
   {
@@ -51,6 +68,35 @@ const DEFAULT_SLOTS: Omit<LayoutSlot, "id">[] = [
     monitorHint: "DISPLAY2+DISPLAY1 top monitors",
   },
 ];
+
+export function buildLayoutRunLogPath(
+  baseDir: string,
+  date = new Date(),
+  suffix = crypto.randomUUID().slice(0, 8)
+): string {
+  const stamp = date
+    .toISOString()
+    .replace(/[:.]/g, "-")
+    .replace("T", "_")
+    .replace("Z", "");
+  return path.join(baseDir, `layout-run-${stamp}-${suffix}.log`);
+}
+
+export function createLayoutRunLogPath(date = new Date()): string {
+  const baseDir = path.join(
+    process.env.LOCALAPPDATA ||
+      process.env.USERPROFILE ||
+      process.env.HOME ||
+      ".",
+    LAYOUT_LOG_DIR_NAME
+  );
+
+  if (!fs.existsSync(baseDir)) {
+    fs.mkdirSync(baseDir, { recursive: true });
+  }
+
+  return buildLayoutRunLogPath(baseDir, date);
+}
 
 export class LayoutManager {
   private configPath: string;
@@ -87,8 +133,8 @@ export class LayoutManager {
     this.config = {
       version: 1,
       scriptPath: DEFAULT_SCRIPT_PATH,
-      slots: DEFAULT_SLOTS.map((s) => ({
-        ...s,
+      slots: DEFAULT_SLOTS.map((slot) => ({
+        ...slot,
         id: crypto.randomUUID(),
       })),
     };
@@ -100,7 +146,11 @@ export class LayoutManager {
       if (!fs.existsSync(this.configDir)) {
         fs.mkdirSync(this.configDir, { recursive: true });
       }
-      fs.writeFileSync(this.configPath, JSON.stringify(this.config, null, 2), "utf-8");
+      fs.writeFileSync(
+        this.configPath,
+        JSON.stringify(this.config, null, 2),
+        "utf-8"
+      );
     } catch (err) {
       console.error("[LayoutManager] Failed to save config:", err);
     }
@@ -111,11 +161,15 @@ export class LayoutManager {
   }
 
   getSlot(id: string): LayoutSlot | null {
-    return this.config.slots.find((s) => s.id === id) ?? null;
+    return this.config.slots.find((slot) => slot.id === id) ?? null;
   }
 
   getSlotByLetter(letter: string): LayoutSlot | null {
-    return this.config.slots.find((s) => s.letter.toUpperCase() === letter.toUpperCase()) ?? null;
+    return (
+      this.config.slots.find(
+        (slot) => slot.letter.toUpperCase() === letter.toUpperCase()
+      ) ?? null
+    );
   }
 
   addSlot(slot: Omit<LayoutSlot, "id">): LayoutSlot {
@@ -131,14 +185,21 @@ export class LayoutManager {
     return newSlot;
   }
 
-  updateSlot(id: string, updates: Partial<Omit<LayoutSlot, "id">>): LayoutSlot | null {
-    const idx = this.config.slots.findIndex((s) => s.id === id);
-    if (idx === -1) return null;
+  updateSlot(
+    id: string,
+    updates: Partial<Omit<LayoutSlot, "id">>
+  ): LayoutSlot | null {
+    const index = this.config.slots.findIndex((slot) => slot.id === id);
+    if (index === -1) {
+      return null;
+    }
 
-    const updated = { ...this.config.slots[idx], ...updates };
+    const updated = { ...this.config.slots[index], ...updates };
     this.config = {
       ...this.config,
-      slots: this.config.slots.map((s, i) => (i === idx ? updated : s)),
+      slots: this.config.slots.map((slot, slotIndex) =>
+        slotIndex === index ? updated : slot
+      ),
     };
     this.saveConfig();
     return updated;
@@ -148,7 +209,7 @@ export class LayoutManager {
     const before = this.config.slots.length;
     this.config = {
       ...this.config,
-      slots: this.config.slots.filter((s) => s.id !== id),
+      slots: this.config.slots.filter((slot) => slot.id !== id),
     };
     if (this.config.slots.length < before) {
       this.saveConfig();
@@ -166,47 +227,142 @@ export class LayoutManager {
     this.saveConfig();
   }
 
-  applySlot(id: string, windowTitle?: string): Promise<{ success: boolean; error?: string }> {
+  applySlot(id: string, target: LayoutTarget = {}): Promise<LayoutApplyResult> {
     const slot = this.getSlot(id);
     if (!slot) {
       return Promise.resolve({ success: false, error: `Slot not found: ${id}` });
     }
-    return this.runLayoutScript(slot.scriptArgs, windowTitle);
+    return this.runLayoutScript(slot.scriptArgs, target);
   }
 
-  applySlotByLetter(letter: string, windowTitle?: string): Promise<{ success: boolean; error?: string }> {
+  applySlotByLetter(
+    letter: string,
+    target: LayoutTarget = {}
+  ): Promise<LayoutApplyResult> {
     const slot = this.getSlotByLetter(letter);
     if (!slot) {
-      return Promise.resolve({ success: false, error: `Slot "${letter}" not found` });
+      return Promise.resolve({
+        success: false,
+        error: `Slot "${letter}" not found`,
+      });
     }
-    return this.runLayoutScript(slot.scriptArgs, windowTitle);
+    return this.runLayoutScript(slot.scriptArgs, target);
   }
 
-  private runLayoutScript(args: string[], windowTitle?: string): Promise<{ success: boolean; error?: string }> {
+  private runLayoutScript(
+    args: string[],
+    target: LayoutTarget = {}
+  ): Promise<LayoutApplyResult> {
     return new Promise((resolve) => {
       const scriptPath = this.config.scriptPath;
-
       if (!fs.existsSync(scriptPath)) {
         resolve({ success: false, error: `Script not found: ${scriptPath}` });
         return;
       }
 
       const fullArgs = [...args];
-      if (windowTitle) {
-        fullArgs.push("-WindowTitle", windowTitle);
+      if (
+        typeof target.windowHandle === "number" &&
+        Number.isFinite(target.windowHandle) &&
+        target.windowHandle > 0
+      ) {
+        fullArgs.push("-WindowHandle", String(target.windowHandle));
+      } else if (target.windowTitle) {
+        fullArgs.push("-WindowTitle", target.windowTitle);
       }
+
+      const logPath = createLayoutRunLogPath();
+      fullArgs.push("-LogPath", logPath);
 
       const proc = spawn(
         "powershell.exe",
-        ["-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", scriptPath, ...fullArgs],
-        { detached: true, stdio: "ignore" }
+        [
+          "-NoProfile",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-WindowStyle",
+          "Hidden",
+          "-File",
+          scriptPath,
+          ...fullArgs,
+        ],
+        {
+          windowsHide: true,
+          stdio: ["ignore", "pipe", "pipe"],
+        }
       );
 
-      proc.unref();
+      const stdoutLines: string[] = [];
+      const stderrLines: string[] = [];
+      let finished = false;
 
-      // Don't wait for the script to finish — it's fire-and-forget
-      // The PS1 handles its own lifecycle (finds window, moves, resizes panel, exits)
-      resolve({ success: true });
+      const finish = (result: LayoutApplyResult) => {
+        if (finished) {
+          return;
+        }
+
+        finished = true;
+        clearTimeout(timeout);
+        resolve({
+          ...result,
+          logPath,
+          windowHandle: target.windowHandle,
+          windowTitle: target.windowTitle,
+        });
+      };
+
+      proc.stdout?.on("data", (data: Buffer) => {
+        stdoutLines.push(
+          ...data
+            .toString()
+            .split(/\r?\n/)
+            .map((line) => line.trim())
+            .filter(Boolean)
+        );
+      });
+
+      proc.stderr?.on("data", (data: Buffer) => {
+        stderrLines.push(
+          ...data
+            .toString()
+            .split(/\r?\n/)
+            .map((line) => line.trim())
+            .filter(Boolean)
+        );
+      });
+
+      proc.on("error", (err) => {
+        finish({
+          success: false,
+          error: `Failed to start layout script: ${err.message}`,
+          exitCode: null,
+        });
+      });
+
+      proc.on("close", (code) => {
+        if (code === 0) {
+          finish({ success: true, exitCode: code });
+          return;
+        }
+
+        const combinedOutput = [...stderrLines, ...stdoutLines].join(" ").trim();
+        finish({
+          success: false,
+          exitCode: code,
+          error:
+            combinedOutput ||
+            `Layout script exited with code ${code ?? "unknown"}`,
+        });
+      });
+
+      const timeout = setTimeout(() => {
+        proc.kill();
+        finish({
+          success: false,
+          exitCode: null,
+          error: `Layout script timed out after ${LAYOUT_RUN_TIMEOUT_MS}ms`,
+        });
+      }, LAYOUT_RUN_TIMEOUT_MS);
     });
   }
 }

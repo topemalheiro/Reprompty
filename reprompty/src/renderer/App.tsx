@@ -7,7 +7,10 @@ interface DetectedWindow {
   title: string;
   folderPath: string;
   processName: string;
-  extension: "kilo-code" | "claude-code" | "unknown";
+  extension: "kilo-code" | "claude-code" | "codex" | "unknown";
+  activeAgent: "kilo-code" | "claude-code" | "codex" | "unknown";
+  availableAgents: Array<"kilo-code" | "claude-code" | "codex">;
+  backgroundRoute: "ipc-kilo" | "cdp-claude" | "cdp-codex" | "foreground";
   pipePath: string | null;
   sendMethod: "background" | "foreground";
 }
@@ -293,20 +296,23 @@ function App() {
     return windowInfo.folderPath || windowInfo.title;
   };
 
-  const extBadge = (extension: string) => {
-    if (extension === "kilo-code") {
+  const agentBadge = (agent: string) => {
+    if (agent === "kilo-code") {
       return { label: "Kilo", bg: "#2ea043" };
     }
-    if (extension === "claude-code") {
+    if (agent === "claude-code") {
       return { label: "Claude", bg: "#4a9eff" };
+    }
+    if (agent === "codex") {
+      return { label: "Codex", bg: "#0078d4" };
     }
     return { label: "?", bg: "#666" };
   };
 
-  const methodBadge = (method: string) =>
-    method === "background"
-      ? { label: "BG", bg: "#2ea043" }
-      : { label: "FG", bg: "#d29922" };
+  const methodBadge = (route: DetectedWindow["backgroundRoute"]) =>
+    route === "foreground"
+      ? { label: "FG", bg: "#d29922" }
+      : { label: "BG", bg: "#2ea043" };
 
   return (
     <div style={styles.container}>
@@ -353,8 +359,8 @@ function App() {
               <p style={styles.empty}>No VS Code / Kilo Code windows detected</p>
             ) : (
               detectedWindows.map((windowInfo) => {
-                const ext = extBadge(windowInfo.extension);
-                const method = methodBadge(windowInfo.sendMethod);
+                const agent = agentBadge(windowInfo.activeAgent);
+                const method = methodBadge(windowInfo.backgroundRoute);
                 return (
                   <div key={windowInfo.handle} style={styles.card}>
                     <div style={{ flex: 1 }}>
@@ -368,11 +374,16 @@ function App() {
                           flexWrap: "wrap",
                         }}
                       >
-                        <span style={{ ...styles.badge, background: ext.bg }}>{ext.label}</span>
+                        <span style={{ ...styles.badge, background: agent.bg }}>{agent.label}</span>
                         <span style={{ ...styles.badge, background: method.bg }}>{method.label}</span>
                         <span style={{ color: "#666", fontSize: 11 }}>PID {windowInfo.pid}</span>
                         {windowInfo.pipePath && (
                           <span style={{ color: "#555", fontSize: 10 }}>{windowInfo.pipePath}</span>
+                        )}
+                        {windowInfo.availableAgents.length > 0 && (
+                          <span style={{ color: "#777", fontSize: 10 }}>
+                            tabs {windowInfo.availableAgents.join(", ")}
+                          </span>
                         )}
                       </div>
                     </div>
@@ -394,16 +405,18 @@ function App() {
             >
               <option value="">Select a window...</option>
               {detectedWindows.map((windowInfo) => {
-                const ext =
-                  windowInfo.extension === "kilo-code"
+                const agent =
+                  windowInfo.activeAgent === "kilo-code"
                     ? "Kilo"
-                    : windowInfo.extension === "claude-code"
+                    : windowInfo.activeAgent === "claude-code"
                     ? "Claude"
+                    : windowInfo.activeAgent === "codex"
+                    ? "Codex"
                     : "?";
-                const method = windowInfo.sendMethod === "background" ? "BG" : "FG";
+                const method = windowInfo.backgroundRoute === "foreground" ? "FG" : "BG";
                 return (
                   <option key={windowInfo.handle} value={String(windowInfo.handle)}>
-                    {formatTitle(windowInfo)} ({ext}) [{method}]
+                    {formatTitle(windowInfo)} ({agent}) [{method}]
                   </option>
                 );
               })}
