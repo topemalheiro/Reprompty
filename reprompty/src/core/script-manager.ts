@@ -8,6 +8,15 @@ export type ScriptType = "powershell" | "batch" | "vbs" | "executable";
 export type ScriptStatus = "stopped" | "running" | "error" | "starting";
 export type LayoutRole = "primary" | "secondary" | null;
 
+export interface ScriptMcpAction {
+  id: string;
+  enabled: boolean;
+  toolName: string;
+  label: string;
+  description: string;
+  args: string[];
+}
+
 export interface ScriptEntry {
   id: string;
   name: string;
@@ -16,6 +25,7 @@ export interface ScriptEntry {
   args: string[];
   autoStart: boolean;
   layoutRole: LayoutRole;
+  mcpActions: ScriptMcpAction[];
   addedAt: string;
 }
 
@@ -38,18 +48,238 @@ interface ScriptsConfig {
   scripts: ScriptEntry[];
 }
 
+export interface ScriptToolRegistration {
+  scriptId: string;
+  scriptName: string;
+  scriptPath: string;
+  action: ScriptMcpAction;
+}
+
+export interface ScriptActionResult {
+  success: boolean;
+  scriptName: string;
+  toolName: string;
+  exitCode: number | null;
+  stdout: string[];
+  stderr: string[];
+  message: string;
+}
+
 const MAX_OUTPUT_LINES = 500;
+const HEADER_SCAN_LINE_LIMIT = 40;
+
+export const RESERVED_MCP_TOOL_NAMES = [
+  "spawn_window",
+  "list_spawn_targets",
+  "send_prompt",
+  "add_connection",
+  "list_connections",
+  "remove_connection",
+  "daisy_chain",
+  "list_scripts",
+  "run_script",
+  "stop_script",
+  "apply_layout",
+  "list_layout_slots",
+  "spawn_and_layout",
+  "detect_windows",
+  "check_cdp",
+] as const;
 
 function detectScriptType(filePath: string): ScriptType {
   const ext = path.extname(filePath).toLowerCase();
   switch (ext) {
-    case ".ps1": return "powershell";
+    case ".ps1":
+      return "powershell";
     case ".bat":
-    case ".cmd": return "batch";
-    case ".vbs": return "vbs";
-    case ".exe": return "executable";
-    default: return "powershell";
+    case ".cmd":
+      return "batch";
+    case ".vbs":
+      return "vbs";
+    case ".exe":
+      return "executable";
+    default:
+      return "powershell";
   }
+}
+
+export function normalizeMcpToolName(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_")
+    .replace(/[^a-z0-9_]/g, "")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function normalizeActionId(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function normalizeArgs(args: unknown): string[] {
+  if (!Array.isArray(args)) {
+    return [];
+  }
+  return args
+    .map((value) => String(value).trim())
+    .filter(Boolean);
+}
+
+function layoutScriptDefaults(scriptName: string, filePath: string): ScriptMcpAction[] {
+  const combined = `${scriptName} ${path.basename(filePath)}`.toLowerCase();
+  const looksLikeLayoutScript =
+    combined.includes("vscodesidepanellayout") ||
+    combined.includes("sidepanellayout");
+
+  if (!looksLikeLayoutScript) {
+    return [];
+  }
+
+  return [
+    {
+      id: "dual-monitor-layout-bottom",
+      enabled: true,
+      toolName: "dual_monitor_layout_bottom",
+      label: "Dual monitor layout (bottom)",
+      description: "Run the Ctrl+Alt+V dual monitor bottom layout",
+      args: ["-Once"],
+    },
+    {
+      id: "top-monitors-layout-panel-full",
+      enabled: true,
+      toolName: "top_monitors_layout_panel_full",
+      label: "Top monitors layout (panel full)",
+      description: "Run the Ctrl+Alt+N top monitors panel-full layout",
+      args: ["-SingleOnce"],
+    },
+  ];
+}
+
+export function parseScriptMcpActionsFromHeader(filePath: string): ScriptMcpAction[] {
+  try {
+    if (!fs.existsSync(filePath)) {
+      return [];
+    }
+
+    const lines = fs
+      .readFileSync(filePath, "utf-8")
+      .split(/\r?\n/)
+      .slice(0, HEADER_SCAN_LINE_LIMIT);
+
+    const results = new Map<string, ScriptMcpAction>();
+
+    for (const line of lines) {
+      const match = line.match(/reprompty-mcp:\s*(\{.+\})/i);
+      if (!match) {
+        continue;
+      }
+
+      try {
+        const parsed = JSON.parse(match[1]) as Partial<ScriptMcpAction>;
+        const normalized = normalizeMcpAction(parsed);
+        results.set(normalized.toolName, normalized);
+      } catch (err) {
+        console.warn("[ScriptManager] Failed to parse reprompty-mcp header:", err);
+      }
+    }
+
+    return Array.from(results.values());
+  } catch (err) {
+    console.warn("[ScriptManager] Failed to read script header:", err);
+    return [];
+  }
+}
+
+function normalizeMcpAction(action: Partial<ScriptMcpAction>): ScriptMcpAction {
+  const toolName = normalizeMcpToolName(String(action.toolName || ""));
+  const label = String(action.label || "").trim();
+  const description = String(action.description || "").trim();
+
+  if (!toolName) {
+    throw new Error("MCP action tool name is required");
+  }
+  if (!label) {
+    throw new Error(`MCP action "${toolName}" is missing a label`);
+  }
+
+  const idSource = String(action.id || toolName);
+  const id = normalizeActionId(idSource) || normalizeActionId(toolName);
+  if (!id) {
+    throw new Error(`MCP action "${toolName}" needs a valid id`);
+  }
+
+  return {
+    id,
+    enabled: action.enabled !== false,
+    toolName,
+    label,
+    description,
+    args: normalizeArgs(action.args),
+  };
+}
+
+function mergeImportedActions(
+  existing: ScriptMcpAction[],
+  imported: ScriptMcpAction[]
+): ScriptMcpAction[] {
+  if (imported.length === 0) {
+    return existing;
+  }
+
+  const merged = new Map<string, ScriptMcpAction>();
+  for (const action of existing) {
+    merged.set(action.toolName, action);
+  }
+  for (const action of imported) {
+    const prior = merged.get(action.toolName);
+    merged.set(action.toolName, prior ? { ...prior, ...action } : action);
+  }
+  return Array.from(merged.values());
+}
+
+function getImportedScriptActions(name: string, filePath: string): ScriptMcpAction[] {
+  return [
+    ...parseScriptMcpActionsFromHeader(filePath),
+    ...layoutScriptDefaults(name, filePath),
+  ];
+}
+
+function sanitizeScriptEntry(
+  entry: Partial<ScriptEntry>,
+  options: { importActions?: boolean } = {}
+): ScriptEntry {
+  const name = String(entry.name || "").trim();
+  const filePath = String(entry.path || "").replace(/^["']|["']$/g, "").trim();
+  if (!name) {
+    throw new Error("Script name is required");
+  }
+  if (!filePath) {
+    throw new Error("Script path is required");
+  }
+
+  const baseActions = Array.isArray(entry.mcpActions) ? entry.mcpActions : [];
+  const normalizedBaseActions = baseActions.map((action) => normalizeMcpAction(action));
+  const mergedActions = options.importActions
+    ? mergeImportedActions(normalizedBaseActions, getImportedScriptActions(name, filePath))
+    : normalizedBaseActions;
+
+  return {
+    id: entry.id || crypto.randomUUID(),
+    name,
+    path: filePath,
+    type: entry.type || detectScriptType(filePath),
+    args: normalizeArgs(entry.args),
+    autoStart: Boolean(entry.autoStart),
+    layoutRole: entry.layoutRole ?? null,
+    mcpActions: mergedActions,
+    addedAt: entry.addedAt || new Date().toISOString(),
+  };
 }
 
 export class ScriptManager extends EventEmitter {
@@ -74,9 +304,8 @@ export class ScriptManager extends EventEmitter {
       if (fs.existsSync(this.configPath)) {
         const raw = fs.readFileSync(this.configPath, "utf-8");
         const config: ScriptsConfig = JSON.parse(raw);
-        for (const entry of config.scripts) {
-          // Sanitize paths on load
-          entry.path = entry.path.replace(/^["']|["']$/g, "");
+        for (const savedEntry of config.scripts ?? []) {
+          const entry = sanitizeScriptEntry(savedEntry, { importActions: true });
           this.scripts.set(entry.id, {
             entry,
             status: "stopped",
@@ -97,7 +326,7 @@ export class ScriptManager extends EventEmitter {
   private saveConfig(): void {
     try {
       const config: ScriptsConfig = {
-        scripts: Array.from(this.scripts.values()).map((r) => r.entry),
+        scripts: Array.from(this.scripts.values()).map((running) => running.entry),
       };
       if (!fs.existsSync(this.configDir)) {
         fs.mkdirSync(this.configDir, { recursive: true });
@@ -108,27 +337,56 @@ export class ScriptManager extends EventEmitter {
     }
   }
 
+  private validateMcpActionToolNames(entry: ScriptEntry, excludingScriptId?: string): void {
+    const seen = new Set<string>();
+    for (const action of entry.mcpActions) {
+      if (RESERVED_MCP_TOOL_NAMES.includes(action.toolName as (typeof RESERVED_MCP_TOOL_NAMES)[number])) {
+        throw new Error(`"${action.toolName}" is reserved for a built-in MCP tool`);
+      }
+      if (seen.has(action.toolName)) {
+        throw new Error(`Duplicate MCP tool name "${action.toolName}" within script "${entry.name}"`);
+      }
+      seen.add(action.toolName);
+    }
+
+    const registrations = this.listGeneratedMcpTools();
+    for (const registration of registrations) {
+      if (registration.scriptId === excludingScriptId) {
+        continue;
+      }
+      const incoming = entry.mcpActions.find(
+        (action) => action.toolName === registration.action.toolName
+      );
+      if (incoming) {
+        throw new Error(
+          `MCP tool name "${incoming.toolName}" is already used by script "${registration.scriptName}"`
+        );
+      }
+    }
+  }
+
   addScript(
     name: string,
     filePath: string,
     type?: ScriptType,
     args: string[] = []
   ): ScriptEntry {
-    const id = crypto.randomUUID();
-    // Strip wrapping quotes from file picker paths
-    const cleanPath = filePath.replace(/^["']|["']$/g, "");
-    const entry: ScriptEntry = {
-      id,
+    const entry = sanitizeScriptEntry(
+      {
       name,
-      path: cleanPath,
+      path: filePath,
       type: type || detectScriptType(filePath),
       args,
       autoStart: false,
       layoutRole: null,
-      addedAt: new Date().toISOString(),
-    };
+      mcpActions: [],
+      },
+      { importActions: true }
+    );
 
-    this.scripts.set(id, {
+    this.validateMcpActionToolNames(entry);
+
+    this.scripts.set(entry.id, {
       entry,
       status: "stopped",
       pid: null,
@@ -144,7 +402,9 @@ export class ScriptManager extends EventEmitter {
 
   removeScript(id: string): boolean {
     const running = this.scripts.get(id);
-    if (!running) return false;
+    if (!running) {
+      return false;
+    }
 
     if (running.status === "running") {
       this.stopScript(id);
@@ -158,68 +418,136 @@ export class ScriptManager extends EventEmitter {
 
   updateScript(id: string, updates: Partial<ScriptEntry>): ScriptEntry | null {
     const running = this.scripts.get(id);
-    if (!running) return null;
+    if (!running) {
+      return null;
+    }
 
-    const updated: ScriptEntry = { ...running.entry, ...updates, id };
+    const updated = sanitizeScriptEntry(
+      {
+        ...running.entry,
+        ...updates,
+        id,
+        addedAt: running.entry.addedAt,
+      },
+      { importActions: false }
+    );
+    this.validateMcpActionToolNames(updated, id);
+
     this.scripts.set(id, { ...running, entry: updated });
     this.saveConfig();
     return updated;
   }
 
+  rescanMcpActions(id: string): ScriptEntry | null {
+    const running = this.scripts.get(id);
+    if (!running) {
+      return null;
+    }
+
+    const imported = getImportedScriptActions(running.entry.name, running.entry.path);
+    const mergedActions = mergeImportedActions(running.entry.mcpActions, imported);
+    return this.updateScript(id, { mcpActions: mergedActions });
+  }
+
   listScripts(): ScriptInfo[] {
-    return Array.from(this.scripts.values()).map((r) => ({
-      ...r.entry,
-      status: r.status,
-      pid: r.pid,
-      exitCode: r.exitCode,
+    return Array.from(this.scripts.values()).map((running) => ({
+      ...running.entry,
+      status: running.status,
+      pid: running.pid,
+      exitCode: running.exitCode,
     }));
+  }
+
+  listGeneratedMcpTools(): ScriptToolRegistration[] {
+    const registrations: ScriptToolRegistration[] = [];
+
+    for (const running of this.scripts.values()) {
+      for (const action of running.entry.mcpActions) {
+        if (!action.enabled) {
+          continue;
+        }
+        registrations.push({
+          scriptId: running.entry.id,
+          scriptName: running.entry.name,
+          scriptPath: running.entry.path,
+          action,
+        });
+      }
+    }
+
+    return registrations.sort((a, b) =>
+      a.action.toolName.localeCompare(b.action.toolName)
+    );
+  }
+
+  findGeneratedMcpTool(toolName: string): ScriptToolRegistration | null {
+    const normalizedToolName = normalizeMcpToolName(toolName);
+    return (
+      this.listGeneratedMcpTools().find(
+        (registration) => registration.action.toolName === normalizedToolName
+      ) || null
+    );
   }
 
   findByIdOrName(idOrName: string): ScriptEntry | null {
     const byId = this.scripts.get(idOrName);
-    if (byId) return byId.entry;
+    if (byId) {
+      return byId.entry;
+    }
 
     const byName = Array.from(this.scripts.values()).find(
-      (r) => r.entry.name.toLowerCase() === idOrName.toLowerCase()
+      (running) => running.entry.name.toLowerCase() === idOrName.toLowerCase()
     );
     return byName ? byName.entry : null;
   }
 
-  private buildSpawnArgs(entry: ScriptEntry): { command: string; args: string[] } {
+  private buildSpawnArgs(
+    entry: ScriptEntry,
+    extraArgs: string[] = []
+  ): { command: string; args: string[] } {
+    const allArgs = [...entry.args, ...extraArgs];
+
     switch (entry.type) {
       case "powershell":
         return {
           command: "powershell.exe",
           args: [
-            "-ExecutionPolicy", "Bypass",
+            "-ExecutionPolicy",
+            "Bypass",
             "-NoProfile",
-            "-WindowStyle", "Hidden",
-            "-File", entry.path,
-            ...entry.args,
+            "-WindowStyle",
+            "Hidden",
+            "-File",
+            entry.path,
+            ...allArgs,
           ],
         };
       case "batch":
         return {
           command: "cmd.exe",
-          args: ["/c", entry.path, ...entry.args],
+          args: ["/c", entry.path, ...allArgs],
         };
       case "vbs":
         return {
           command: "cscript.exe",
-          args: ["//Nologo", entry.path, ...entry.args],
+          args: ["//Nologo", entry.path, ...allArgs],
         };
       case "executable":
         return {
           command: entry.path,
-          args: [...entry.args],
+          args: allArgs,
         };
     }
   }
 
   runScript(id: string): boolean {
     const running = this.scripts.get(id);
-    if (!running) return false;
-    if (running.status === "running") return true;
+    if (!running) {
+      return false;
+    }
+    if (running.status === "running") {
+      return true;
+    }
 
     const { command, args } = this.buildSpawnArgs(running.entry);
 
@@ -240,37 +568,37 @@ export class ScriptManager extends EventEmitter {
       this.emitStatus(id, "running", proc.pid);
 
       proc.stdout?.on("data", (data: Buffer) => {
-        const lines = data.toString().split("\n").filter((l) => l.trim());
+        const lines = data.toString().split("\n").filter((line) => line.trim());
         for (const line of lines) {
           this.appendOutput(id, "stdout", line);
         }
       });
 
       proc.stderr?.on("data", (data: Buffer) => {
-        const lines = data.toString().split("\n").filter((l) => l.trim());
+        const lines = data.toString().split("\n").filter((line) => line.trim());
         for (const line of lines) {
           this.appendOutput(id, "stderr", line);
         }
       });
 
       proc.on("close", (code: number | null) => {
-        const r = this.scripts.get(id);
-        if (r) {
-          r.status = code === 0 || code === null ? "stopped" : "error";
-          r.exitCode = code;
-          r.process = null;
-          r.pid = null;
-          this.emitStatus(id, r.status);
+        const latest = this.scripts.get(id);
+        if (latest) {
+          latest.status = code === 0 || code === null ? "stopped" : "error";
+          latest.exitCode = code;
+          latest.process = null;
+          latest.pid = null;
+          this.emitStatus(id, latest.status);
           this.emit("script-exit", { scriptId: id, exitCode: code });
         }
       });
 
       proc.on("error", (err: Error) => {
-        const r = this.scripts.get(id);
-        if (r) {
-          r.status = "error";
-          r.process = null;
-          r.pid = null;
+        const latest = this.scripts.get(id);
+        if (latest) {
+          latest.status = "error";
+          latest.process = null;
+          latest.pid = null;
           this.appendOutput(id, "stderr", `Process error: ${err.message}`);
           this.emitStatus(id, "error");
         }
@@ -287,32 +615,171 @@ export class ScriptManager extends EventEmitter {
     }
   }
 
+  async runGeneratedMcpTool(toolName: string): Promise<ScriptActionResult> {
+    const registration = this.findGeneratedMcpTool(toolName);
+    if (!registration) {
+      return {
+        success: false,
+        scriptName: "",
+        toolName: normalizeMcpToolName(toolName),
+        exitCode: null,
+        stdout: [],
+        stderr: [],
+        message: `Unknown generated MCP tool: ${toolName}`,
+      };
+    }
+
+    const running = this.scripts.get(registration.scriptId);
+    if (!running) {
+      return {
+        success: false,
+        scriptName: registration.scriptName,
+        toolName: registration.action.toolName,
+        exitCode: null,
+        stdout: [],
+        stderr: [],
+        message: `Script "${registration.scriptName}" is no longer registered`,
+      };
+    }
+
+    if (running.status === "running") {
+      return {
+        success: false,
+        scriptName: registration.scriptName,
+        toolName: registration.action.toolName,
+        exitCode: null,
+        stdout: [],
+        stderr: [],
+        message: `Script "${registration.scriptName}" is already running`,
+      };
+    }
+
+    const { command, args } = this.buildSpawnArgs(running.entry, registration.action.args);
+    this.appendOutput(
+      registration.scriptId,
+      "stdout",
+      `[MCP:${registration.action.toolName}] Starting with args: ${registration.action.args.join(" ")}`
+    );
+
+    return new Promise<ScriptActionResult>((resolve) => {
+      const stdout: string[] = [];
+      const stderr: string[] = [];
+
+      try {
+        const proc = spawn(command, args, {
+          windowsHide: true,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+
+        proc.stdout?.on("data", (data: Buffer) => {
+          const lines = data.toString().split("\n").filter((line) => line.trim());
+          for (const line of lines) {
+            stdout.push(line);
+            this.appendOutput(
+              registration.scriptId,
+              "stdout",
+              `[MCP:${registration.action.toolName}] ${line}`
+            );
+          }
+        });
+
+        proc.stderr?.on("data", (data: Buffer) => {
+          const lines = data.toString().split("\n").filter((line) => line.trim());
+          for (const line of lines) {
+            stderr.push(line);
+            this.appendOutput(
+              registration.scriptId,
+              "stderr",
+              `[MCP:${registration.action.toolName}] ${line}`
+            );
+          }
+        });
+
+        proc.on("error", (err: Error) => {
+          const line = `[MCP:${registration.action.toolName}] Process error: ${err.message}`;
+          stderr.push(line);
+          this.appendOutput(registration.scriptId, "stderr", line);
+          resolve({
+            success: false,
+            scriptName: registration.scriptName,
+            toolName: registration.action.toolName,
+            exitCode: null,
+            stdout,
+            stderr,
+            message: `Failed to run ${registration.action.toolName}: ${err.message}`,
+          });
+        });
+
+        proc.on("close", (code: number | null) => {
+          const success = code === 0 || code === null;
+          const message = success
+            ? `Ran ${registration.action.toolName} via ${registration.scriptName}`
+            : `Generated MCP tool ${registration.action.toolName} failed with exit code ${code}`;
+
+          this.appendOutput(
+            registration.scriptId,
+            success ? "stdout" : "stderr",
+            `[MCP:${registration.action.toolName}] Completed with exit code ${code ?? 0}`
+          );
+
+          resolve({
+            success,
+            scriptName: registration.scriptName,
+            toolName: registration.action.toolName,
+            exitCode: code,
+            stdout,
+            stderr,
+            message,
+          });
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.appendOutput(
+          registration.scriptId,
+          "stderr",
+          `[MCP:${registration.action.toolName}] Spawn failed: ${message}`
+        );
+        resolve({
+          success: false,
+          scriptName: registration.scriptName,
+          toolName: registration.action.toolName,
+          exitCode: null,
+          stdout,
+          stderr: [...stderr, message],
+          message: `Failed to run ${registration.action.toolName}: ${message}`,
+        });
+      }
+    });
+  }
+
   stopScript(id: string): boolean {
     const running = this.scripts.get(id);
-    if (!running?.process || running.status !== "running") return false;
+    if (!running?.process || running.status !== "running") {
+      return false;
+    }
 
     const pid = running.pid;
 
     try {
       running.process.kill();
     } catch {
-      // Ignore kill errors, will force-kill below
+      // Ignore kill errors, will force-kill below.
     }
 
     setTimeout(() => {
-      const r = this.scripts.get(id);
-      if (r && r.status === "running" && pid) {
+      const latest = this.scripts.get(id);
+      if (latest && latest.status === "running" && pid) {
         try {
           execSync(`taskkill /PID ${pid} /T /F`, {
             windowsHide: true,
             stdio: "ignore",
           });
-          r.status = "stopped";
-          r.process = null;
-          r.pid = null;
+          latest.status = "stopped";
+          latest.process = null;
+          latest.pid = null;
           this.emitStatus(id, "stopped");
         } catch {
-          // Process may have already exited
+          // Process may have already exited.
         }
       }
     }, 3000);
@@ -322,9 +789,10 @@ export class ScriptManager extends EventEmitter {
 
   setLayoutRole(id: string, role: LayoutRole): boolean {
     const target = this.scripts.get(id);
-    if (!target) return false;
+    if (!target) {
+      return false;
+    }
 
-    // Clear any existing script with this role
     if (role !== null) {
       for (const [otherId, other] of this.scripts) {
         if (otherId !== id && other.entry.layoutRole === role) {
@@ -340,27 +808,30 @@ export class ScriptManager extends EventEmitter {
 
   getLayoutScript(role: "primary" | "secondary"): ScriptEntry | null {
     const found = Array.from(this.scripts.values()).find(
-      (r) => r.entry.layoutRole === role
+      (running) => running.entry.layoutRole === role
     );
     return found ? found.entry : null;
   }
 
   getOutput(id: string, limit?: number): string[] {
     const running = this.scripts.get(id);
-    if (!running) return [];
+    if (!running) {
+      return [];
+    }
     const lines = running.outputLines;
     return limit ? lines.slice(-limit) : lines;
   }
 
   autoStartScripts(): void {
-    const autoStartEntries = Array.from(this.scripts.values())
-      .filter((r) => r.entry.autoStart);
+    const autoStartEntries = Array.from(this.scripts.values()).filter(
+      (running) => running.entry.autoStart
+    );
 
     let delay = 0;
-    for (const r of autoStartEntries) {
+    for (const running of autoStartEntries) {
       setTimeout(() => {
-        console.log(`[ScriptManager] Auto-starting: ${r.entry.name}`);
-        this.runScript(r.entry.id);
+        console.log(`[ScriptManager] Auto-starting: ${running.entry.name}`);
+        this.runScript(running.entry.id);
       }, delay);
       delay += 100;
     }
@@ -375,9 +846,15 @@ export class ScriptManager extends EventEmitter {
     }
   }
 
-  private appendOutput(id: string, stream: "stdout" | "stderr", line: string): void {
+  private appendOutput(
+    id: string,
+    stream: "stdout" | "stderr",
+    line: string
+  ): void {
     const running = this.scripts.get(id);
-    if (!running) return;
+    if (!running) {
+      return;
+    }
 
     running.outputLines.push(line);
     if (running.outputLines.length > MAX_OUTPUT_LINES) {
@@ -401,5 +878,4 @@ export class ScriptManager extends EventEmitter {
   }
 }
 
-// Singleton instance
 export const scriptManager = new ScriptManager();

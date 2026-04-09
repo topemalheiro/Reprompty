@@ -6,6 +6,7 @@ import fs from "node:fs";
 import nodePath from "node:path";
 import { join } from "node:path";
 import { scriptManager } from "../core/script-manager.js";
+import { spawnTargetManager } from "../core/spawn-target-manager.js";
 import { connectionManager } from "../core/connection-manager.js";
 import { layoutManager } from "../core/layout-manager.js";
 import { getOrCreateIpcClient, removeIpcClient } from "../core/ipc-client.js";
@@ -401,6 +402,31 @@ electron.ipcMain.handle("spawn-window", async (_event: any, args: { folderPath: 
   }
 });
 
+electron.ipcMain.handle("spawn-targets-list", async () => {
+  return spawnTargetManager.listTargets();
+});
+
+electron.ipcMain.handle(
+  "spawn-targets-add",
+  async (
+    _event: any,
+    args: { id?: string; label: string; folderPath: string; windowName?: string }
+  ) => {
+    return spawnTargetManager.addTarget(args);
+  }
+);
+
+electron.ipcMain.handle(
+  "spawn-targets-update",
+  async (_event: any, id: string, updates: Record<string, unknown>) => {
+    return spawnTargetManager.updateTarget(id, updates as any);
+  }
+);
+
+electron.ipcMain.handle("spawn-targets-remove", async (_event: any, id: string) => {
+  return spawnTargetManager.removeTarget(id);
+});
+
 // ============================================================================
 // DAISY CHAIN IPC HANDLER
 // ============================================================================
@@ -475,6 +501,10 @@ electron.ipcMain.handle("scripts-stop", async (_event: any, id: string) => {
 
 electron.ipcMain.handle("scripts-update", async (_event: any, id: string, updates: Record<string, unknown>) => {
   return scriptManager.updateScript(id, updates);
+});
+
+electron.ipcMain.handle("scripts-rescan-mcp-actions", async (_event: any, id: string) => {
+  return scriptManager.rescanMcpActions(id);
 });
 
 electron.ipcMain.handle("scripts-set-layout-role", async (_event: any, id: string, role: string | null) => {

@@ -80,14 +80,29 @@ interface WebSocketConfig {
 
 ## MCP Tools
 
-### spawn_window
-Spawn a new VS Code window with a project folder.
+### list_spawn_targets
+List saved spawn target aliases for VS Code folders.
 
 ```typescript
-interface SpawnWindowParams {
-  folderPath: string;
-  windowName?: string;
-}
+// Returns: Array<{ id: string; label: string; folderPath: string; windowName?: string }>
+```
+
+### spawn_window
+Spawn a new VS Code window using a saved target alias or a raw project folder.
+
+```typescript
+type SpawnWindowParams =
+  | { target: string; windowName?: string }
+  | { folderPath: string; windowName?: string };
+```
+
+### spawn_and_layout
+Spawn a VS Code window and apply a layout slot in one call.
+
+```typescript
+type SpawnAndLayoutParams =
+  | { target: string; slot: string }
+  | { folderPath: string; slot: string };
 ```
 
 ### send_prompt
@@ -142,15 +157,15 @@ interface DaisyChainParams {
 }
 ```
 
-### invoke_skill
-Invoke a Reprompty skill on a connection.
+### Script-Defined MCP Tools (Layout Presets)
+Scripts can expose first-class MCP tools via portable `reprompty-mcp:` header lines (recommended) or via the Reprompty Scripts tab UI.
 
-```typescript
-interface InvokeSkillParams {
-  connectionId: string;
-  skillName: string;
-  skillParams?: Record<string, any>;
-}
+Header example (PowerShell):
+
+```powershell
+# reprompty-mcp: {"toolName":"dual_monitor_layout_bottom","label":"Dual monitor layout (bottom)","description":"Run the Ctrl+Alt+V dual monitor bottom layout","args":["-Once"]}
+# reprompty-mcp: {"toolName":"top_monitors_layout_panel_full","label":"Top monitors layout (panel full)","description":"Run the Ctrl+Alt+N top monitors panel-full layout","args":["-SingleOnce"]}
+param(...)
 ```
 
 ## Background Messaging (No Foreground Focus)
@@ -185,6 +200,12 @@ The extension listens on `KILO_IPC_SOCKET_PATH` or `ROO_CODE_IPC_SOCKET_PATH` en
 ## Example Usage (Auto Claude MCP Style)
 
 ```typescript
+// List saved targets (token-friendly spawn aliases)
+await list_spawn_targets();
+
+// Spawn a window via target alias
+await spawn_window({ target: "windows-project" });
+
 // Add a VS Code window connection (background - uses IPC socket)
 await add_connection({
   type: 'vscode-window',
@@ -219,6 +240,9 @@ await daisy_chain({
   ],
   continueOnError: true
 });
+
+// Call a script-defined MCP tool (no args)
+await dual_monitor_layout_bottom();
 ```
 
 ## Platform Abstraction
