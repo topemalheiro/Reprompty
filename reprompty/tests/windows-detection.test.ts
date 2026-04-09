@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import {
+  buildKiloPipeCandidates,
   fallbackProcessNameFromTitle,
   isSupportedEditorProcessName,
   normalizeEditorProcessName,
@@ -26,5 +27,13 @@ describe("windows detection helpers", () => {
     expect(resolveDetectedWindowProcessName("", "repo - Visual Studio Code")).toBe("Code");
     expect(resolveDetectedWindowProcessName(undefined, "repo - Kilo Code")).toBe("kilocode");
     expect(fallbackProcessNameFromTitle("repo - Kilo Code")).toBe("kilocode");
+  });
+
+  it("builds pipe candidates for kilo and legacy roo naming", () => {
+    expect(buildKiloPipeCandidates(1234)).toEqual([
+      "\\\\.\\pipe\\kilo-ipc-1234",
+      "\\\\.\\pipe\\kilo-code-1234",
+      "\\\\.\\pipe\\roo-code-1234",
+    ]);
   });
 });

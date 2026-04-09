@@ -20,6 +20,7 @@ const SUPPORTED_EDITOR_PROCESS_NAMES = new Set([
   ...VS_CODE_PROCESS_NAMES,
   ...KILO_CODE_PROCESS_NAMES,
 ]);
+const KILO_PIPE_PREFIXES = ["kilo-ipc-", "kilo-code-", "roo-code-"];
 
 function getWritableTempDir(): string {
   const windowsRoot = process.env.SystemRoot || "C:\\Windows";
@@ -59,6 +60,40 @@ export function isSupportedEditorProcessName(name?: string | null): boolean {
 
 export function fallbackProcessNameFromTitle(title: string): string {
   return title.includes("Kilo Code") ? "kilocode" : "Code";
+}
+
+export function buildKiloPipeCandidates(pid: number): string[] {
+  return KILO_PIPE_PREFIXES.map((prefix) => `\\\\.\\pipe\\${prefix}${pid}`);
+}
+
+function findLegacyKiloPipeFallback(): string | null {
+  try {
+    const names = fs
+      .readdirSync("\\\\.\\pipe\\")
+      .filter((name) =>
+        KILO_PIPE_PREFIXES.some((prefix) => name.toLowerCase().startsWith(prefix))
+      );
+    if (names.length === 1) {
+      return `\\\\.\\pipe\\${names[0]}`;
+    }
+  } catch {
+    // Ignore pipe enumeration failures
+  }
+  return null;
+}
+
+export function resolveKiloPipePath(pid: number): string | null {
+  const candidates = buildKiloPipeCandidates(pid);
+  for (const candidate of candidates) {
+    try {
+      fs.accessSync(candidate);
+      return candidate;
+    } catch {
+      // Try next candidate
+    }
+  }
+
+  return findLegacyKiloPipeFallback();
 }
 
 export function resolveDetectedWindowProcessName(
@@ -179,7 +214,7 @@ export function findWindowByTitle(windowTitle: string): WindowInfo | null {
  * Get the default IPC socket path for Kilo Code
  */
 export function getDefaultSocketPath(): string {
-  return `\\\\.\\pipe\\kilo-ipc-${process.pid}`;
+  return resolveKiloPipePath(process.pid) ?? `\\\\.\\pipe\\kilo-ipc-${process.pid}`;
 }
 
 /**
@@ -206,7 +241,7 @@ export function listWindows(): WindowInfo[] {
       windows.push({
         pid: proc.Id,
         title: proc.ProcessName,
-        socketPath: `\\\\.\\pipe\\kilo-ipc-${proc.Id}`,
+        socketPath: resolveKiloPipePath(proc.Id) ?? `\\\\.\\pipe\\kilo-ipc-${proc.Id}`,
         processName: proc.ProcessName,
       });
     }
@@ -307,7 +342,7 @@ export interface DetectedWindow {
   extension: AgentKind;
   activeAgent: AgentKind;
   availableAgents: Array<Exclude<AgentKind, "unknown">>;
-  backgroundRoute: "ipc-kilo" | "cdp-claude" | "cdp-codex" | "foreground";
+  backgroundRoute: "ipc-kilo" | "cdp-kilo" | "cdp-claude" | "cdp-codex" | "foreground";
   pipePath: string | null;
   sendMethod: "background" | "foreground";
 }
@@ -319,6 +354,9 @@ export function resolveBackgroundRoute(
 ): DetectedWindow["backgroundRoute"] {
   if (activeAgent === "kilo-code" && pipeExists) {
     return "ipc-kilo";
+  }
+  if (activeAgent === "kilo-code" && availableAgents.includes("kilo-code")) {
+    return "cdp-kilo";
   }
   if (activeAgent === "claude-code" && availableAgents.includes("claude-code")) {
     return "cdp-claude";
@@ -428,16 +466,9 @@ $results | ForEach-Object { Write-Output $_ }
       const isKilo =
         normalizedProcessName === "kilocode" || title.includes("Kilo Code");
 
-      // Probe for IPC pipe
-      const pipePath = `\\\\.\\pipe\\kilo-ipc-${pid}`;
-      let pipeExists = false;
-      try {
-        // Check if pipe exists by trying to stat it
-        fs.accessSync(pipePath);
-        pipeExists = true;
-      } catch {
-        // Pipe doesn't exist or not accessible
-      }
+      // Probe for IPC pipe (supports Kilo and legacy Roo pipe naming)
+      const pipePath = resolveKiloPipePath(pid);
+      const pipeExists = Boolean(pipePath);
 
       const agentState = findWindowAgentState(agentStates, title);
       const activeAgent = agentState?.activeAgent ?? "unknown";

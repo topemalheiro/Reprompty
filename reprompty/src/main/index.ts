@@ -371,7 +371,11 @@ electron.ipcMain.handle("send-to-detected", async (_event: any, args: { window: 
   }
 
   // Try CDP for the currently active side-panel agent
-  if (win.backgroundRoute === "cdp-claude" || win.backgroundRoute === "cdp-codex") {
+  if (
+    win.backgroundRoute === "cdp-claude" ||
+    win.backgroundRoute === "cdp-codex" ||
+    win.backgroundRoute === "cdp-kilo"
+  ) {
     try {
       dbg("Trying CDP...");
       const { getCdpPort } = await import("../platform/windows.js");

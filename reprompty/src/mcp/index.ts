@@ -455,7 +455,11 @@ export async function callTool(
         }
       }
 
-      if (cfg.extension === "claude-code" || cfg.extension === "codex") {
+      if (
+        cfg.extension === "claude-code" ||
+        cfg.extension === "codex" ||
+        cfg.extension === "kilo-code"
+      ) {
         const port = getCdpPort();
         if (port) {
           const result = await sendViaAgentCdp(port, prompt, {
@@ -525,7 +529,11 @@ export async function callTool(
             }
             client.sendTaskMessage(promptTask.prompt);
             results.push(`Sent to ${connection.name} (background)`);
-          } else if (cfg.extension === "claude-code" || cfg.extension === "codex") {
+          } else if (
+            cfg.extension === "claude-code" ||
+            cfg.extension === "codex" ||
+            cfg.extension === "kilo-code"
+          ) {
             const port = getCdpPort();
             if (!port) {
               throw new Error("CDP port not available");
