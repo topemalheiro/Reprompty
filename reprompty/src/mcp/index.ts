@@ -10,7 +10,14 @@ import {
   layoutManager,
   type LayoutTarget,
 } from "../core/layout-manager.js";
-import { spawnTargetManager } from "../core/spawn-target-manager.js";
+import {
+  resolveSpawnTargetDesktop,
+  spawnTargetManager,
+} from "../core/spawn-target-manager.js";
+import {
+  listVirtualDesktops,
+  switchToVirtualDesktop,
+} from "../core/virtual-desktop-manager.js";
 import {
   spawnWindow,
   detectWindows,
@@ -48,12 +55,24 @@ const BUILT_IN_TOOLS: MCPTool[] = [
         target: { type: "string", description: "Saved spawn target alias" },
         folderPath: { type: "string", description: "Path to the project folder" },
         windowName: { type: "string", description: "Optional name for the window" },
+        desktop: {
+          type: "string",
+          description: "Optional virtual desktop name to switch to before spawning",
+        },
       },
     },
   },
   {
     name: "list_spawn_targets",
     description: "List all saved spawn target aliases for opening VS Code windows",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+  },
+  {
+    name: "list_virtual_desktops",
+    description: "List all available Windows virtual desktops and indicate which one is current",
     inputSchema: {
       type: "object",
       properties: {},
@@ -217,6 +236,10 @@ const BUILT_IN_TOOLS: MCPTool[] = [
         target: { type: "string", description: "Saved spawn target alias" },
         folderPath: { type: "string", description: "Path to the project folder" },
         windowName: { type: "string", description: "Optional name for the window" },
+        desktop: {
+          type: "string",
+          description: "Optional virtual desktop name to switch to before spawning",
+        },
         slot: {
           type: "string",
           description: "Layout slot letter (A, B) or name to apply after spawning",
@@ -268,13 +291,15 @@ export function getTools(): MCPTool[] {
 }
 
 function resolveSpawnInput(args: Record<string, unknown>):
-  | { folderPath: string; windowName?: string; label: string }
+  | { folderPath: string; windowName?: string; desktop?: string; label: string }
   | { error: string } {
   const target = typeof args.target === "string" ? args.target.trim() : "";
   const explicitFolderPath =
     typeof args.folderPath === "string" ? args.folderPath.trim() : "";
   const explicitWindowName =
     typeof args.windowName === "string" ? args.windowName.trim() : "";
+  const explicitDesktop =
+    typeof args.desktop === "string" ? args.desktop.trim() : "";
 
   if (target) {
     const savedTarget = spawnTargetManager.getTarget(target);
@@ -284,6 +309,7 @@ function resolveSpawnInput(args: Record<string, unknown>):
     return {
       folderPath: savedTarget.folderPath,
       windowName: explicitWindowName || savedTarget.windowName,
+      desktop: resolveSpawnTargetDesktop(explicitDesktop, savedTarget.desktop),
       label: `${savedTarget.label} (${savedTarget.id})`,
     };
   }
@@ -295,6 +321,7 @@ function resolveSpawnInput(args: Record<string, unknown>):
   return {
     folderPath: explicitFolderPath,
     windowName: explicitWindowName || undefined,
+    desktop: resolveSpawnTargetDesktop(explicitDesktop),
     label: explicitFolderPath,
   };
 }
@@ -414,12 +441,27 @@ export async function callTool(
       if ("error" in resolved) {
         return textResult(resolved.error, true);
       }
-      const result = await spawnWindow(resolved.folderPath, resolved.windowName);
+      const result = await spawnWindow(
+        resolved.folderPath,
+        resolved.windowName,
+        resolved.desktop
+      );
       return textResult(JSON.stringify(result, null, 2), !result.success);
     }
 
     case "list_spawn_targets": {
       return textResult(JSON.stringify(spawnTargetManager.listTargets(), null, 2));
+    }
+
+    case "list_virtual_desktops": {
+      try {
+        return textResult(JSON.stringify(await listVirtualDesktops(), null, 2));
+      } catch (error) {
+        return textResult(
+          `Failed to list virtual desktops: ${error instanceof Error ? error.message : String(error)}`,
+          true
+        );
+      }
     }
 
     case "send_prompt": {
@@ -659,6 +701,35 @@ export async function callTool(
         return textResult(`Slot "${slotKey}" not found. Available: ${available}`, true);
       }
 
+      if (resolved.desktop) {
+        const desktopResult = await switchToVirtualDesktop(resolved.desktop);
+        logToolEvent("spawn_and_layout desktop switch", {
+          requestedFolderPath: resolved.folderPath,
+          requestedDesktop: resolved.desktop,
+          success: desktopResult.success,
+          error: desktopResult.error,
+        });
+
+        if (!desktopResult.success) {
+          return textResult(
+            JSON.stringify(
+              {
+                success: false,
+                stage: "switch_desktop",
+                requestedFolderPath: resolved.folderPath,
+                requestedWindowName: resolved.windowName ?? null,
+                requestedDesktop: resolved.desktop,
+                slot: { id: slot.id, letter: slot.letter, name: slot.name },
+                error: desktopResult.error,
+              },
+              null,
+              2
+            ),
+            true
+          );
+        }
+      }
+
       const baselineWindows = await detectWindows();
       const titleHints = buildSpawnTitleHints({
         folderPath: resolved.folderPath,
@@ -669,6 +740,7 @@ export async function callTool(
         requestedTarget: typeof args.target === "string" ? args.target : null,
         requestedFolderPath: resolved.folderPath,
         requestedWindowName: resolved.windowName ?? null,
+        requestedDesktop: resolved.desktop ?? null,
         slot: slot.letter,
         slotName: slot.name,
         titleHints,
@@ -679,6 +751,7 @@ export async function callTool(
       if (!spawnResult.success) {
         logToolEvent("spawn_and_layout spawn failed", {
           requestedFolderPath: resolved.folderPath,
+          requestedDesktop: resolved.desktop ?? null,
           slot: slot.letter,
           message: spawnResult.message,
         });
@@ -689,6 +762,7 @@ export async function callTool(
               stage: "spawn",
               requestedFolderPath: resolved.folderPath,
               requestedWindowName: resolved.windowName ?? null,
+              requestedDesktop: resolved.desktop ?? null,
               slot: { id: slot.id, letter: slot.letter, name: slot.name },
               error: spawnResult.message,
             },
@@ -702,6 +776,7 @@ export async function callTool(
       const selection = await waitForSpawnedWindow(baselineWindows, titleHints);
       logToolEvent("spawn_and_layout window selection", {
         requestedFolderPath: resolved.folderPath,
+        requestedDesktop: resolved.desktop ?? null,
         slot: slot.letter,
         reason: selection.reason,
         candidateHandles: selection.newCandidates.map(formatWindowSummary),
@@ -719,6 +794,7 @@ export async function callTool(
               stage: "select_window",
               requestedFolderPath: resolved.folderPath,
               requestedWindowName: resolved.windowName ?? null,
+              requestedDesktop: resolved.desktop ?? null,
               slot: { id: slot.id, letter: slot.letter, name: slot.name },
               titleHints,
               baselineHandles: baselineWindows.map(formatWindowSummary),
@@ -741,6 +817,7 @@ export async function callTool(
 
       logToolEvent("spawn_and_layout layout result", {
         requestedFolderPath: resolved.folderPath,
+        requestedDesktop: resolved.desktop ?? null,
         slot: slot.letter,
         target,
         success: layoutResult.success,
@@ -754,6 +831,7 @@ export async function callTool(
             success: layoutResult.success,
             requestedFolderPath: resolved.folderPath,
             requestedWindowName: resolved.windowName ?? null,
+            requestedDesktop: resolved.desktop ?? null,
             spawnTargetLabel: resolved.label,
             slot: { id: slot.id, letter: slot.letter, name: slot.name },
             titleHints,

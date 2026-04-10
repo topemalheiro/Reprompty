@@ -9,6 +9,7 @@ import { scriptManager } from "../core/script-manager.js";
 import { spawnTargetManager } from "../core/spawn-target-manager.js";
 import { connectionManager } from "../core/connection-manager.js";
 import { layoutManager } from "../core/layout-manager.js";
+import { listVirtualDesktops } from "../core/virtual-desktop-manager.js";
 import { getOrCreateIpcClient, removeIpcClient } from "../core/ipc-client.js";
 import type { VSCodeWindowConfig } from "../core/connection-manager.js";
 
@@ -411,10 +412,10 @@ electron.ipcMain.handle("send-to-detected", async (_event: any, args: { window: 
   };
 });
 
-electron.ipcMain.handle("spawn-window", async (_event: any, args: { folderPath: string; windowName?: string }) => {
+electron.ipcMain.handle("spawn-window", async (_event: any, args: { folderPath: string; windowName?: string; desktop?: string }) => {
   try {
     const { spawnWindow } = await import("../platform/windows.js");
-    return spawnWindow(args.folderPath, args.windowName);
+    return spawnWindow(args.folderPath, args.windowName, args.desktop);
   } catch (err) {
     return { success: false, error: String(err) };
   }
@@ -424,11 +425,21 @@ electron.ipcMain.handle("spawn-targets-list", async () => {
   return spawnTargetManager.listTargets();
 });
 
+electron.ipcMain.handle("virtual-desktops-list", async () => {
+  return listVirtualDesktops();
+});
+
 electron.ipcMain.handle(
   "spawn-targets-add",
   async (
     _event: any,
-    args: { id?: string; label: string; folderPath: string; windowName?: string }
+    args: {
+      id?: string;
+      label: string;
+      folderPath: string;
+      windowName?: string;
+      desktop?: string;
+    }
   ) => {
     return spawnTargetManager.addTarget(args);
   }

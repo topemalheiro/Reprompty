@@ -6,6 +6,7 @@ export interface SpawnTarget {
   label: string;
   folderPath: string;
   windowName?: string;
+  desktop?: string;
   addedAt: string;
 }
 
@@ -27,13 +28,26 @@ export function normalizeSpawnTargetId(value: string): string {
     .slice(0, 64);
 }
 
+export function resolveSpawnTargetDesktop(
+  explicitDesktop?: string | null,
+  defaultDesktop?: string | null
+): string | undefined {
+  const explicit = explicitDesktop?.trim();
+  if (explicit) {
+    return explicit;
+  }
+
+  const fallback = defaultDesktop?.trim();
+  return fallback || undefined;
+}
+
 export class SpawnTargetManager {
   private readonly configDir: string;
   private readonly configPath: string;
   private readonly targets = new Map<string, SpawnTarget>();
 
-  constructor() {
-    this.configDir = getConfigDir();
+  constructor(configDir = getConfigDir()) {
+    this.configDir = configDir;
     this.configPath = path.join(this.configDir, "spawn-targets.json");
     this.loadConfig();
   }
@@ -96,6 +110,7 @@ export class SpawnTargetManager {
       label,
       folderPath: target.folderPath.trim(),
       windowName: target.windowName?.trim() || undefined,
+      desktop: target.desktop?.trim() || undefined,
       addedAt: target.addedAt || new Date().toISOString(),
     };
   }

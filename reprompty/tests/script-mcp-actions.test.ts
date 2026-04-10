@@ -7,7 +7,11 @@ import {
   normalizeMcpToolName,
   parseScriptMcpActionsFromHeader,
 } from "../src/core/script-manager.ts";
-import { normalizeSpawnTargetId } from "../src/core/spawn-target-manager.ts";
+import {
+  SpawnTargetManager,
+  normalizeSpawnTargetId,
+  resolveSpawnTargetDesktop,
+} from "../src/core/spawn-target-manager.ts";
 
 const tempDirs: string[] = [];
 
@@ -58,5 +62,26 @@ describe("spawn target helpers", () => {
   it("normalizes target aliases for MCP-friendly target names", () => {
     expect(normalizeSpawnTargetId("Windows Project")).toBe("windows-project");
     expect(normalizeSpawnTargetId("  Repo / AI Window  ")).toBe("repo-ai-window");
+  });
+
+  it("prefers an explicit desktop over the saved target default", () => {
+    expect(resolveSpawnTargetDesktop("3", "2")).toBe("3");
+    expect(resolveSpawnTargetDesktop("", "2")).toBe("2");
+    expect(resolveSpawnTargetDesktop(undefined, undefined)).toBeUndefined();
+  });
+
+  it("persists saved target desktop defaults", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "reprompty-target-test-"));
+    tempDirs.push(dir);
+
+    const manager = new SpawnTargetManager(dir);
+    manager.addTarget({
+      label: "Windows Project",
+      folderPath: "C:\\Users\\topem\\Desktop\\Windows Project",
+      desktop: "2",
+    });
+
+    const reloadedManager = new SpawnTargetManager(dir);
+    expect(reloadedManager.getTarget("windows-project")?.desktop).toBe("2");
   });
 });
