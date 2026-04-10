@@ -7,6 +7,8 @@ interface DetectedWindow {
   title: string;
   folderPath: string;
   processName: string;
+  desktop?: string;
+  isCurrentDesktop?: boolean;
   extension: "kilo-code" | "claude-code" | "codex" | "unknown";
   activeAgent: "kilo-code" | "claude-code" | "codex" | "unknown";
   availableAgents: Array<"kilo-code" | "claude-code" | "codex">;
@@ -20,17 +22,37 @@ interface SpawnTarget {
   label: string;
   folderPath: string;
   windowName?: string;
+  desktop?: string;
   addedAt: string;
 }
 
+interface VirtualDesktopInfo {
+  index: number;
+  name: string;
+  isCurrent: boolean;
+}
+
+interface SpawnWindowResult {
+  success: boolean;
+  message?: string;
+  error?: string;
+  desktop?: string;
+}
+
 interface ElectronAPI {
-  spawnWindow: (args: { folderPath: string; windowName?: string }) => Promise<unknown>;
+  spawnWindow: (args: {
+    folderPath: string;
+    windowName?: string;
+    desktop?: string;
+  }) => Promise<SpawnWindowResult>;
   listSpawnTargets: () => Promise<SpawnTarget[]>;
+  listVirtualDesktops: () => Promise<VirtualDesktopInfo[]>;
   addSpawnTarget: (args: {
     id?: string;
     label: string;
     folderPath: string;
     windowName?: string;
+    desktop?: string;
   }) => Promise<SpawnTarget>;
   updateSpawnTarget: (id: string, updates: Record<string, unknown>) => Promise<SpawnTarget | null>;
   removeSpawnTarget: (id: string) => Promise<boolean>;
@@ -125,16 +147,19 @@ function App() {
   const [activeTab, setActiveTab] = useState<"windows" | "send" | "spawn" | "scripts">("windows");
   const [detectedWindows, setDetectedWindows] = useState<DetectedWindow[]>([]);
   const [spawnTargets, setSpawnTargets] = useState<SpawnTarget[]>([]);
+  const [virtualDesktops, setVirtualDesktops] = useState<VirtualDesktopInfo[]>([]);
   const [selectedWindowHandle, setSelectedWindowHandle] = useState("");
   const [promptText, setPromptText] = useState("");
   const [status, setStatus] = useState("");
   const [folderPath, setFolderPath] = useState("");
   const [quickWindowName, setQuickWindowName] = useState("");
+  const [quickDesktopName, setQuickDesktopName] = useState("");
   const [editingTargetId, setEditingTargetId] = useState<string | null>(null);
   const [targetIdInput, setTargetIdInput] = useState("");
   const [targetLabelInput, setTargetLabelInput] = useState("");
   const [targetFolderInput, setTargetFolderInput] = useState("");
   const [targetWindowNameInput, setTargetWindowNameInput] = useState("");
+  const [targetDesktopInput, setTargetDesktopInput] = useState("");
 
   const selectedTargetPreview = useMemo(() => {
     const alias = (editingTargetId || targetIdInput || targetLabelInput)
@@ -145,10 +170,22 @@ function App() {
     return alias || "windows-project";
   }, [editingTargetId, targetIdInput, targetLabelInput]);
 
+  const virtualDesktopSummary = useMemo(
+    () =>
+      virtualDesktops
+        .map((desktop) => `${desktop.name}${desktop.isCurrent ? " (current)" : ""}`)
+        .join(", "),
+    [virtualDesktops]
+  );
+
   useEffect(() => {
     void loadSpawnTargets();
+    void loadVirtualDesktops();
     window.electronAPI.detectWindows().then(setDetectedWindows).catch(() => undefined);
-    window.electronAPI.onWindowsDetected(setDetectedWindows);
+    window.electronAPI.onWindowsDetected((windows) => {
+      setDetectedWindows(windows);
+      void loadVirtualDesktops(true);
+    });
     return () => {
       window.electronAPI.removeWindowListeners();
     };
@@ -163,12 +200,24 @@ function App() {
     }
   };
 
+  const loadVirtualDesktops = async (silent = false) => {
+    try {
+      const desktops = await window.electronAPI.listVirtualDesktops();
+      setVirtualDesktops(desktops);
+    } catch (err) {
+      if (!silent) {
+        setStatus(`Failed to load virtual desktops: ${err}`);
+      }
+    }
+  };
+
   const resetTargetForm = () => {
     setEditingTargetId(null);
     setTargetIdInput("");
     setTargetLabelInput("");
     setTargetFolderInput("");
     setTargetWindowNameInput("");
+    setTargetDesktopInput("");
   };
 
   const sendPrompt = async () => {
@@ -209,13 +258,22 @@ function App() {
     }
 
     try {
-      await window.electronAPI.spawnWindow({
+      const result = await window.electronAPI.spawnWindow({
         folderPath: folderPath.trim(),
         windowName: quickWindowName.trim() || undefined,
+        desktop: quickDesktopName.trim() || undefined,
       });
-      setStatus(`Spawned VS Code for ${folderPath.trim()}`);
+      setStatus(
+        result.success
+          ? result.message || `Spawned VS Code for ${folderPath.trim()}`
+          : result.error || result.message || "Failed to spawn VS Code window"
+      );
+      if (!result.success) {
+        return;
+      }
       setFolderPath("");
       setQuickWindowName("");
+      setQuickDesktopName("");
     } catch (err) {
       setStatus(`Error: ${err}`);
     }
@@ -223,11 +281,16 @@ function App() {
 
   const spawnSavedTarget = async (target: SpawnTarget) => {
     try {
-      await window.electronAPI.spawnWindow({
+      const result = await window.electronAPI.spawnWindow({
         folderPath: target.folderPath,
         windowName: target.windowName,
+        desktop: target.desktop,
       });
-      setStatus(`Spawned ${target.label} (${target.id})`);
+      setStatus(
+        result.success
+          ? result.message || `Spawned ${target.label} (${target.id})`
+          : result.error || result.message || `Failed to spawn ${target.label}`
+      );
     } catch (err) {
       setStatus(`Failed to spawn ${target.label}: ${err}`);
     }
@@ -244,6 +307,7 @@ function App() {
       label: targetLabelInput.trim(),
       folderPath: targetFolderInput.trim(),
       windowName: targetWindowNameInput.trim() || undefined,
+      desktop: targetDesktopInput.trim() || undefined,
     };
 
     try {
@@ -267,6 +331,7 @@ function App() {
     setTargetLabelInput(target.label);
     setTargetFolderInput(target.folderPath);
     setTargetWindowNameInput(target.windowName || "");
+    setTargetDesktopInput(target.desktop || "");
     setActiveTab("spawn");
   };
 
@@ -313,6 +378,27 @@ function App() {
     route === "foreground"
       ? { label: "FG", bg: "#d29922" }
       : { label: "BG", bg: "#2ea043" };
+
+  const renderDesktopOptions = (selectedDesktop: string) => {
+    const hasSelectedDesktop =
+      Boolean(selectedDesktop) &&
+      virtualDesktops.some((desktop) => desktop.name === selectedDesktop);
+
+    return (
+      <>
+        <option value="">Current desktop</option>
+        {!hasSelectedDesktop && selectedDesktop ? (
+          <option value={selectedDesktop}>{selectedDesktop} (missing)</option>
+        ) : null}
+        {virtualDesktops.map((desktop) => (
+          <option key={desktop.index} value={desktop.name}>
+            {desktop.name}
+            {desktop.isCurrent ? " (current)" : ""}
+          </option>
+        ))}
+      </>
+    );
+  };
 
   return (
     <div style={styles.container}>
@@ -377,6 +463,12 @@ function App() {
                         <span style={{ ...styles.badge, background: agent.bg }}>{agent.label}</span>
                         <span style={{ ...styles.badge, background: method.bg }}>{method.label}</span>
                         <span style={{ color: "#666", fontSize: 11 }}>PID {windowInfo.pid}</span>
+                        {windowInfo.desktop && (
+                          <span style={styles.desktopBadge}>
+                            Desktop {windowInfo.desktop}
+                            {windowInfo.isCurrentDesktop ? " (current)" : ""}
+                          </span>
+                        )}
                         {windowInfo.pipePath && (
                           <span style={{ color: "#555", fontSize: 10 }}>{windowInfo.pipePath}</span>
                         )}
@@ -417,6 +509,7 @@ function App() {
                 return (
                   <option key={windowInfo.handle} value={String(windowInfo.handle)}>
                     {formatTitle(windowInfo)} ({agent}) [{method}]
+                    {windowInfo.desktop ? ` <Desktop ${windowInfo.desktop}>` : ""}
                   </option>
                 );
               })}
@@ -469,6 +562,16 @@ function App() {
                 value={quickWindowName}
                 onChange={(event) => setQuickWindowName(event.target.value)}
               />
+              <select
+                style={{ ...styles.select, marginTop: 10, marginBottom: 0 }}
+                value={quickDesktopName}
+                onChange={(event) => setQuickDesktopName(event.target.value)}
+              >
+                {renderDesktopOptions(quickDesktopName)}
+              </select>
+              <div style={styles.desktopHint}>
+                Available desktops: {virtualDesktopSummary || "No virtual desktops detected"}
+              </div>
               <button style={{ ...styles.btn, marginTop: 12 }} onClick={spawnWindow}>
                 Spawn Window
               </button>
@@ -509,6 +612,16 @@ function App() {
                   value={targetWindowNameInput}
                   onChange={(event) => setTargetWindowNameInput(event.target.value)}
                 />
+                <select
+                  style={{ ...styles.select, marginTop: 10, marginBottom: 0 }}
+                  value={targetDesktopInput}
+                  onChange={(event) => setTargetDesktopInput(event.target.value)}
+                >
+                  {renderDesktopOptions(targetDesktopInput)}
+                </select>
+                <div style={styles.desktopHint}>
+                  Default desktop: {virtualDesktopSummary || "No virtual desktops detected"}
+                </div>
                 <div style={styles.targetPreviewRow}>
                   <span style={styles.previewLabel}>MCP call:</span>
                   <code style={styles.previewCode}>
@@ -532,6 +645,9 @@ function App() {
                           <span style={styles.targetIdBadge}>{target.id}</span>
                         </div>
                         <div style={styles.targetPath}>{target.folderPath}</div>
+                        {target.desktop ? (
+                          <div style={styles.targetMeta}>Default desktop: {target.desktop}</div>
+                        ) : null}
                         <code style={styles.targetMcpCall}>
                           spawn_window {`{ "target": "${target.id}" }`}
                         </code>
@@ -658,6 +774,14 @@ const styles: Record<string, React.CSSProperties> = {
     color: "#fff",
     fontWeight: 600,
   },
+  desktopBadge: {
+    padding: "2px 8px",
+    borderRadius: "999px",
+    fontSize: "11px",
+    color: "#cbd5e1",
+    border: "1px solid #3b4252",
+    background: "#252b36",
+  },
   input: {
     width: "100%",
     padding: "10px",
@@ -748,6 +872,12 @@ const styles: Record<string, React.CSSProperties> = {
     color: "#999",
     fontSize: "12px",
   },
+  desktopHint: {
+    marginTop: "8px",
+    color: "#8d96a6",
+    fontSize: "12px",
+    lineHeight: 1.4,
+  },
   previewCode: {
     color: "#9fd0ff",
     fontSize: "12px",
@@ -786,6 +916,11 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: "12px",
     marginTop: "6px",
     wordBreak: "break-word",
+  },
+  targetMeta: {
+    color: "#8d96a6",
+    fontSize: "12px",
+    marginTop: "6px",
   },
   targetMcpCall: {
     display: "block",

@@ -6,6 +6,10 @@ import {
   getWindowAgentStates,
   type AgentKind,
 } from "../core/cdp-client.js";
+import {
+  getWindowDesktopAssignments,
+  switchToVirtualDesktop,
+} from "../core/virtual-desktop-manager.js";
 
 export interface WindowInfo {
   pid: number;
@@ -109,10 +113,24 @@ export function resolveDetectedWindowProcessName(
  */
 export function spawnWindow(
   folderPath: string,
-  _windowName?: string
-): Promise<{ success: boolean; pid?: number; message: string }> {
-  return new Promise((resolve) => {
+  _windowName?: string,
+  desktop?: string
+): Promise<{ success: boolean; pid?: number; message: string; desktop?: string }> {
+  return (async () => {
     try {
+      const resolvedDesktop = desktop?.trim() || undefined;
+      if (resolvedDesktop) {
+        const switchResult = await switchToVirtualDesktop(resolvedDesktop);
+        if (!switchResult.success) {
+          return {
+            success: false,
+            message:
+              switchResult.error ||
+              `Failed to switch to virtual desktop "${resolvedDesktop}"`,
+          };
+        }
+      }
+
       const codePath = nodePath.join(
         process.env.LOCALAPPDATA || "",
         "Programs",
@@ -122,8 +140,7 @@ export function spawnWindow(
       );
 
       if (!fs.existsSync(codePath)) {
-        resolve({ success: false, message: `code.cmd not found at: ${codePath}` });
-        return;
+        return { success: false, message: `code.cmd not found at: ${codePath}` };
       }
 
       const result = execSync(
@@ -131,16 +148,21 @@ export function spawnWindow(
         { encoding: "utf-8", timeout: 15000, stdio: ["pipe", "pipe", "pipe"] }
       ).trim();
 
-      resolve({
+      return {
         success: true,
-        message: `Spawned VS Code window for ${folderPath}${result ? ` (${result})` : ""}`,
-      });
+        message: `Spawned VS Code window for ${folderPath}${resolvedDesktop ? ` on desktop ${resolvedDesktop}` : ""}${result ? ` (${result})` : ""}`,
+        desktop: resolvedDesktop,
+      };
     } catch (error: any) {
       const stderr = error.stderr ? String(error.stderr).trim() : "";
       const msg = stderr || error.message || String(error);
-      resolve({ success: false, message: `Failed to spawn window: ${msg}` });
+      return {
+        success: false,
+        message: `Failed to spawn window: ${msg}`,
+        desktop: desktop?.trim() || undefined,
+      };
     }
-  });
+  })();
 }
 
 /**
@@ -339,6 +361,8 @@ export interface DetectedWindow {
   title: string;
   folderPath: string;
   processName: string;
+  desktop?: string;
+  isCurrentDesktop?: boolean;
   extension: AgentKind;
   activeAgent: AgentKind;
   availableAgents: Array<Exclude<AgentKind, "unknown">>;
@@ -440,6 +464,14 @@ $results | ForEach-Object { Write-Output $_ }
     const results: DetectedWindow[] = [];
     const port = getCdpPort();
     const agentStates = port ? await getWindowAgentStates(port).catch(() => []) : [];
+    const desktopAssignments = await getWindowDesktopAssignments(
+      lines
+        .map((line) => Number.parseInt(line.split("|")[0] ?? "", 10))
+        .filter((handle) => Number.isFinite(handle) && handle > 0)
+    ).catch(() => []);
+    const desktopByHandle = new Map(
+      desktopAssignments.map((assignment) => [assignment.handle, assignment])
+    );
 
     for (const line of lines) {
       const parts = line.split("|");
@@ -483,6 +515,7 @@ $results | ForEach-Object { Write-Output $_ }
         availableAgents,
         pipeExists
       );
+      const desktopAssignment = desktopByHandle.get(handle);
       const sendMethod: DetectedWindow["sendMethod"] =
         backgroundRoute === "foreground" ? "foreground" : "background";
       const extension: DetectedWindow["extension"] =
@@ -494,6 +527,8 @@ $results | ForEach-Object { Write-Output $_ }
         title,
         folderPath,
         processName,
+        desktop: desktopAssignment?.desktop,
+        isCurrentDesktop: desktopAssignment?.isCurrentDesktop,
         extension,
         activeAgent,
         availableAgents,

@@ -4,6 +4,7 @@ import { contextBridge, ipcRenderer } from "electron";
 contextBridge.exposeInMainWorld("electronAPI", {
   spawnWindow: (args: unknown) => ipcRenderer.invoke("spawn-window", args),
   listSpawnTargets: () => ipcRenderer.invoke("spawn-targets-list"),
+  listVirtualDesktops: () => ipcRenderer.invoke("virtual-desktops-list"),
   addSpawnTarget: (args: unknown) => ipcRenderer.invoke("spawn-targets-add", args),
   updateSpawnTarget: (id: string, updates: unknown) => ipcRenderer.invoke("spawn-targets-update", id, updates),
   removeSpawnTarget: (id: string) => ipcRenderer.invoke("spawn-targets-remove", id),

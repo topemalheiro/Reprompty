@@ -71,6 +71,7 @@ const HEADER_SCAN_LINE_LIMIT = 40;
 export const RESERVED_MCP_TOOL_NAMES = [
   "spawn_window",
   "list_spawn_targets",
+  "list_virtual_desktops",
   "send_prompt",
   "add_connection",
   "list_connections",
