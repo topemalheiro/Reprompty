@@ -15,8 +15,14 @@ import {
   spawnTargetManager,
 } from "../core/spawn-target-manager.js";
 import {
+  createVirtualDesktop,
+  deriveVirtualDesktopName,
+  ensureVirtualDesktop,
   listVirtualDesktops,
+  makeUniqueVirtualDesktopName,
+  renameVirtualDesktop,
   switchToVirtualDesktop,
+  type VirtualDesktopInfo,
 } from "../core/virtual-desktop-manager.js";
 import {
   spawnWindow,
@@ -45,6 +51,18 @@ export interface MCPResource {
 
 type ToolResult = { content: Array<{ type: string; text: string }>; isError?: boolean };
 
+type ResolvedSpawnInput =
+  | {
+      folderPath: string;
+      windowName?: string;
+      explicitDesktop?: string;
+      defaultDesktop?: string;
+      createDesktop: boolean;
+      label: string;
+      targetLabel?: string;
+    }
+  | { error: string };
+
 const BUILT_IN_TOOLS: MCPTool[] = [
   {
     name: "spawn_window",
@@ -58,6 +76,11 @@ const BUILT_IN_TOOLS: MCPTool[] = [
         desktop: {
           type: "string",
           description: "Optional virtual desktop name to switch to before spawning",
+        },
+        createDesktop: {
+          type: "boolean",
+          description:
+            "Optional: create a fresh desktop for this spawn when no explicit desktop name is supplied",
         },
       },
     },
@@ -76,6 +99,40 @@ const BUILT_IN_TOOLS: MCPTool[] = [
     inputSchema: {
       type: "object",
       properties: {},
+    },
+  },
+  {
+    name: "ensure_virtual_desktop",
+    description:
+      "Ensure a Windows virtual desktop exists by exact name without switching to it",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: {
+          type: "string",
+          description: "Exact desktop name to ensure exists",
+        },
+      },
+      required: ["name"],
+    },
+  },
+  {
+    name: "rename_virtual_desktop",
+    description:
+      "Rename an existing Windows virtual desktop by exact name without switching desktops",
+    inputSchema: {
+      type: "object",
+      properties: {
+        currentName: {
+          type: "string",
+          description: "Current exact desktop name",
+        },
+        newName: {
+          type: "string",
+          description: "New exact desktop name",
+        },
+      },
+      required: ["currentName", "newName"],
     },
   },
   {
@@ -240,6 +297,11 @@ const BUILT_IN_TOOLS: MCPTool[] = [
           type: "string",
           description: "Optional virtual desktop name to switch to before spawning",
         },
+        createDesktop: {
+          type: "boolean",
+          description:
+            "Optional: create a fresh desktop for this spawn when no explicit desktop name is supplied",
+        },
         slot: {
           type: "string",
           description: "Layout slot letter (A, B) or name to apply after spawning",
@@ -290,9 +352,22 @@ export function getTools(): MCPTool[] {
   return [...BUILT_IN_TOOLS, ...getGeneratedTools()];
 }
 
-function resolveSpawnInput(args: Record<string, unknown>):
-  | { folderPath: string; windowName?: string; desktop?: string; label: string }
-  | { error: string } {
+function parseBooleanArg(value: unknown): boolean {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["true", "1", "yes", "on"].includes(normalized)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function resolveSpawnInput(args: Record<string, unknown>): ResolvedSpawnInput {
   const target = typeof args.target === "string" ? args.target.trim() : "";
   const explicitFolderPath =
     typeof args.folderPath === "string" ? args.folderPath.trim() : "";
@@ -300,6 +375,7 @@ function resolveSpawnInput(args: Record<string, unknown>):
     typeof args.windowName === "string" ? args.windowName.trim() : "";
   const explicitDesktop =
     typeof args.desktop === "string" ? args.desktop.trim() : "";
+  const createDesktop = parseBooleanArg(args.createDesktop);
 
   if (target) {
     const savedTarget = spawnTargetManager.getTarget(target);
@@ -309,8 +385,11 @@ function resolveSpawnInput(args: Record<string, unknown>):
     return {
       folderPath: savedTarget.folderPath,
       windowName: explicitWindowName || savedTarget.windowName,
-      desktop: resolveSpawnTargetDesktop(explicitDesktop, savedTarget.desktop),
+      explicitDesktop: explicitDesktop || undefined,
+      defaultDesktop: resolveSpawnTargetDesktop(undefined, savedTarget.desktop),
+      createDesktop,
       label: `${savedTarget.label} (${savedTarget.id})`,
+      targetLabel: savedTarget.label,
     };
   }
 
@@ -321,7 +400,9 @@ function resolveSpawnInput(args: Record<string, unknown>):
   return {
     folderPath: explicitFolderPath,
     windowName: explicitWindowName || undefined,
-    desktop: resolveSpawnTargetDesktop(explicitDesktop),
+    explicitDesktop: explicitDesktop || undefined,
+    defaultDesktop: undefined,
+    createDesktop,
     label: explicitFolderPath,
   };
 }
@@ -363,6 +444,141 @@ function logToolEvent(message: string, details?: unknown): void {
   console.log(
     `[Reprompty MCP] ${message} ${JSON.stringify(details)}`
   );
+}
+
+function resolveRequestedDesktopName(
+  resolved: Exclude<ResolvedSpawnInput, { error: string }>
+): string | undefined {
+  const explicitDesktop = resolved.explicitDesktop?.trim();
+  if (explicitDesktop) {
+    return explicitDesktop;
+  }
+
+  if (resolved.createDesktop) {
+    return undefined;
+  }
+
+  return resolved.defaultDesktop?.trim() || undefined;
+}
+
+function formatVirtualDesktopSummary(
+  desktop: VirtualDesktopInfo | undefined,
+  fallbackName?: string
+): string | undefined {
+  return desktop?.name || fallbackName;
+}
+
+async function prepareSpawnDesktop(
+  resolved: Exclude<ResolvedSpawnInput, { error: string }>
+): Promise<
+  | {
+      success: true;
+      desktop?: string;
+      desktopInfo?: VirtualDesktopInfo;
+      createdDesktop: boolean;
+      desktopMode:
+        | "current"
+        | "explicit"
+        | "target-default"
+        | "created-explicit"
+        | "created-target-default"
+        | "created-derived";
+      requestedDesktop?: string;
+      derivedDesktopBaseName?: string;
+    }
+  | { success: false; error: string }
+> {
+  const explicitDesktop = resolved.explicitDesktop?.trim() || undefined;
+  const defaultDesktop = resolved.defaultDesktop?.trim() || undefined;
+
+  if (explicitDesktop) {
+    const ensuredDesktop = await ensureVirtualDesktop(explicitDesktop);
+    if (!ensuredDesktop.success) {
+      return {
+        success: false,
+        error:
+          ensuredDesktop.error ||
+          `Failed to ensure virtual desktop "${explicitDesktop}"`,
+      };
+    }
+
+    return {
+      success: true,
+      desktop: formatVirtualDesktopSummary(ensuredDesktop.desktop, explicitDesktop),
+      desktopInfo: ensuredDesktop.desktop,
+      createdDesktop: ensuredDesktop.created,
+      desktopMode: ensuredDesktop.created ? "created-explicit" : "explicit",
+      requestedDesktop: explicitDesktop,
+    };
+  }
+
+  if (resolved.createDesktop) {
+    const desktops = await listVirtualDesktops();
+    const derivedDesktopBaseName = deriveVirtualDesktopName(
+      resolved.targetLabel,
+      resolved.folderPath
+    );
+    if (!derivedDesktopBaseName) {
+      return {
+        success: false,
+        error:
+          "Could not derive a desktop name from the target label or folder path",
+      };
+    }
+
+    const freshDesktopName = makeUniqueVirtualDesktopName(
+      desktops,
+      derivedDesktopBaseName
+    );
+    const createdDesktop = await createVirtualDesktop(freshDesktopName);
+    if (!createdDesktop.success) {
+      return {
+        success: false,
+        error:
+          createdDesktop.error ||
+          `Failed to create virtual desktop "${freshDesktopName}"`,
+      };
+    }
+
+    return {
+      success: true,
+      desktop: formatVirtualDesktopSummary(createdDesktop.desktop, freshDesktopName),
+      desktopInfo: createdDesktop.desktop,
+      createdDesktop: true,
+      desktopMode: "created-derived",
+      requestedDesktop: freshDesktopName,
+      derivedDesktopBaseName,
+    };
+  }
+
+  if (defaultDesktop) {
+    const ensuredDesktop = await ensureVirtualDesktop(defaultDesktop);
+    if (!ensuredDesktop.success) {
+      return {
+        success: false,
+        error:
+          ensuredDesktop.error ||
+          `Failed to ensure virtual desktop "${defaultDesktop}"`,
+      };
+    }
+
+    return {
+      success: true,
+      desktop: formatVirtualDesktopSummary(ensuredDesktop.desktop, defaultDesktop),
+      desktopInfo: ensuredDesktop.desktop,
+      createdDesktop: ensuredDesktop.created,
+      desktopMode: ensuredDesktop.created
+        ? "created-target-default"
+        : "target-default",
+      requestedDesktop: defaultDesktop,
+    };
+  }
+
+  return {
+    success: true,
+    createdDesktop: false,
+    desktopMode: "current",
+  };
 }
 
 async function waitForSpawnedWindow(
@@ -441,12 +657,63 @@ export async function callTool(
       if ("error" in resolved) {
         return textResult(resolved.error, true);
       }
+      const desktopResolution = await prepareSpawnDesktop(resolved);
+      if (!desktopResolution.success) {
+        return textResult(
+          JSON.stringify(
+            {
+              success: false,
+              stage: "resolve_desktop",
+              requestedFolderPath: resolved.folderPath,
+              requestedWindowName: resolved.windowName ?? null,
+              requestedDesktop:
+                resolveRequestedDesktopName(resolved) ?? null,
+              createDesktop: resolved.createDesktop,
+              spawnTargetLabel: resolved.label,
+              error: desktopResolution.error,
+            },
+            null,
+            2
+          ),
+          true
+        );
+      }
+
+      logToolEvent("spawn_window desktop resolution", {
+        requestedFolderPath: resolved.folderPath,
+        requestedWindowName: resolved.windowName ?? null,
+        requestedDesktop: resolveRequestedDesktopName(resolved) ?? null,
+        createDesktop: resolved.createDesktop,
+        desktopMode: desktopResolution.desktopMode,
+        effectiveDesktop: desktopResolution.desktop ?? null,
+        createdDesktop: desktopResolution.createdDesktop,
+      });
+
       const result = await spawnWindow(
         resolved.folderPath,
         resolved.windowName,
-        resolved.desktop
+        desktopResolution.desktop
       );
-      return textResult(JSON.stringify(result, null, 2), !result.success);
+      return textResult(
+        JSON.stringify(
+          {
+            ...result,
+            requestedFolderPath: resolved.folderPath,
+            requestedWindowName: resolved.windowName ?? null,
+            requestedDesktop: resolveRequestedDesktopName(resolved) ?? null,
+            createDesktop: resolved.createDesktop,
+            spawnTargetLabel: resolved.label,
+            desktop: desktopResolution.desktop ?? result.desktop ?? null,
+            desktopMode: desktopResolution.desktopMode,
+            createdDesktop: desktopResolution.createdDesktop,
+            derivedDesktopBaseName:
+              desktopResolution.derivedDesktopBaseName ?? null,
+          },
+          null,
+          2
+        ),
+        !result.success
+      );
     }
 
     case "list_spawn_targets": {
@@ -462,6 +729,22 @@ export async function callTool(
           true
         );
       }
+    }
+
+    case "ensure_virtual_desktop": {
+      const requestedName =
+        typeof args.name === "string" ? args.name.trim() : "";
+      const result = await ensureVirtualDesktop(requestedName);
+      return textResult(JSON.stringify(result, null, 2), !result.success);
+    }
+
+    case "rename_virtual_desktop": {
+      const currentName =
+        typeof args.currentName === "string" ? args.currentName.trim() : "";
+      const newName =
+        typeof args.newName === "string" ? args.newName.trim() : "";
+      const result = await renameVirtualDesktop(currentName, newName);
+      return textResult(JSON.stringify(result, null, 2), !result.success);
     }
 
     case "send_prompt": {
@@ -701,11 +984,36 @@ export async function callTool(
         return textResult(`Slot "${slotKey}" not found. Available: ${available}`, true);
       }
 
-      if (resolved.desktop) {
-        const desktopResult = await switchToVirtualDesktop(resolved.desktop);
+      const desktopResolution = await prepareSpawnDesktop(resolved);
+      if (!desktopResolution.success) {
+        return textResult(
+          JSON.stringify(
+            {
+              success: false,
+              stage: "resolve_desktop",
+              requestedFolderPath: resolved.folderPath,
+              requestedWindowName: resolved.windowName ?? null,
+              requestedDesktop: resolveRequestedDesktopName(resolved) ?? null,
+              createDesktop: resolved.createDesktop,
+              slot: { id: slot.id, letter: slot.letter, name: slot.name },
+              error: desktopResolution.error,
+            },
+            null,
+            2
+          ),
+          true
+        );
+      }
+
+      if (desktopResolution.desktop) {
+        const desktopResult = await switchToVirtualDesktop(desktopResolution.desktop);
         logToolEvent("spawn_and_layout desktop switch", {
           requestedFolderPath: resolved.folderPath,
-          requestedDesktop: resolved.desktop,
+          requestedDesktop: resolveRequestedDesktopName(resolved) ?? null,
+          effectiveDesktop: desktopResolution.desktop,
+          createDesktop: resolved.createDesktop,
+          createdDesktop: desktopResolution.createdDesktop,
+          desktopMode: desktopResolution.desktopMode,
           success: desktopResult.success,
           error: desktopResult.error,
         });
@@ -718,7 +1026,11 @@ export async function callTool(
                 stage: "switch_desktop",
                 requestedFolderPath: resolved.folderPath,
                 requestedWindowName: resolved.windowName ?? null,
-                requestedDesktop: resolved.desktop,
+                requestedDesktop: resolveRequestedDesktopName(resolved) ?? null,
+                effectiveDesktop: desktopResolution.desktop,
+                createDesktop: resolved.createDesktop,
+                createdDesktop: desktopResolution.createdDesktop,
+                desktopMode: desktopResolution.desktopMode,
                 slot: { id: slot.id, letter: slot.letter, name: slot.name },
                 error: desktopResult.error,
               },
@@ -740,18 +1052,30 @@ export async function callTool(
         requestedTarget: typeof args.target === "string" ? args.target : null,
         requestedFolderPath: resolved.folderPath,
         requestedWindowName: resolved.windowName ?? null,
-        requestedDesktop: resolved.desktop ?? null,
+        requestedDesktop: resolveRequestedDesktopName(resolved) ?? null,
+        effectiveDesktop: desktopResolution.desktop ?? null,
+        createDesktop: resolved.createDesktop,
+        createdDesktop: desktopResolution.createdDesktop,
+        desktopMode: desktopResolution.desktopMode,
         slot: slot.letter,
         slotName: slot.name,
         titleHints,
         baselineHandles: baselineWindows.map(formatWindowSummary),
       });
 
-      const spawnResult = await spawnWindow(resolved.folderPath, resolved.windowName);
+      const spawnResult = await spawnWindow(
+        resolved.folderPath,
+        resolved.windowName,
+        desktopResolution.desktop
+      );
       if (!spawnResult.success) {
         logToolEvent("spawn_and_layout spawn failed", {
           requestedFolderPath: resolved.folderPath,
-          requestedDesktop: resolved.desktop ?? null,
+          requestedDesktop: resolveRequestedDesktopName(resolved) ?? null,
+          effectiveDesktop: desktopResolution.desktop ?? null,
+          createDesktop: resolved.createDesktop,
+          createdDesktop: desktopResolution.createdDesktop,
+          desktopMode: desktopResolution.desktopMode,
           slot: slot.letter,
           message: spawnResult.message,
         });
@@ -762,7 +1086,11 @@ export async function callTool(
               stage: "spawn",
               requestedFolderPath: resolved.folderPath,
               requestedWindowName: resolved.windowName ?? null,
-              requestedDesktop: resolved.desktop ?? null,
+              requestedDesktop: resolveRequestedDesktopName(resolved) ?? null,
+              effectiveDesktop: desktopResolution.desktop ?? null,
+              createDesktop: resolved.createDesktop,
+              createdDesktop: desktopResolution.createdDesktop,
+              desktopMode: desktopResolution.desktopMode,
               slot: { id: slot.id, letter: slot.letter, name: slot.name },
               error: spawnResult.message,
             },
@@ -776,7 +1104,11 @@ export async function callTool(
       const selection = await waitForSpawnedWindow(baselineWindows, titleHints);
       logToolEvent("spawn_and_layout window selection", {
         requestedFolderPath: resolved.folderPath,
-        requestedDesktop: resolved.desktop ?? null,
+        requestedDesktop: resolveRequestedDesktopName(resolved) ?? null,
+        effectiveDesktop: desktopResolution.desktop ?? null,
+        createDesktop: resolved.createDesktop,
+        createdDesktop: desktopResolution.createdDesktop,
+        desktopMode: desktopResolution.desktopMode,
         slot: slot.letter,
         reason: selection.reason,
         candidateHandles: selection.newCandidates.map(formatWindowSummary),
@@ -794,7 +1126,11 @@ export async function callTool(
               stage: "select_window",
               requestedFolderPath: resolved.folderPath,
               requestedWindowName: resolved.windowName ?? null,
-              requestedDesktop: resolved.desktop ?? null,
+              requestedDesktop: resolveRequestedDesktopName(resolved) ?? null,
+              effectiveDesktop: desktopResolution.desktop ?? null,
+              createDesktop: resolved.createDesktop,
+              createdDesktop: desktopResolution.createdDesktop,
+              desktopMode: desktopResolution.desktopMode,
               slot: { id: slot.id, letter: slot.letter, name: slot.name },
               titleHints,
               baselineHandles: baselineWindows.map(formatWindowSummary),
@@ -817,7 +1153,11 @@ export async function callTool(
 
       logToolEvent("spawn_and_layout layout result", {
         requestedFolderPath: resolved.folderPath,
-        requestedDesktop: resolved.desktop ?? null,
+        requestedDesktop: resolveRequestedDesktopName(resolved) ?? null,
+        effectiveDesktop: desktopResolution.desktop ?? null,
+        createDesktop: resolved.createDesktop,
+        createdDesktop: desktopResolution.createdDesktop,
+        desktopMode: desktopResolution.desktopMode,
         slot: slot.letter,
         target,
         success: layoutResult.success,
@@ -831,7 +1171,13 @@ export async function callTool(
             success: layoutResult.success,
             requestedFolderPath: resolved.folderPath,
             requestedWindowName: resolved.windowName ?? null,
-            requestedDesktop: resolved.desktop ?? null,
+            requestedDesktop: resolveRequestedDesktopName(resolved) ?? null,
+            effectiveDesktop: desktopResolution.desktop ?? null,
+            createDesktop: resolved.createDesktop,
+            createdDesktop: desktopResolution.createdDesktop,
+            desktopMode: desktopResolution.desktopMode,
+            derivedDesktopBaseName:
+              desktopResolution.derivedDesktopBaseName ?? null,
             spawnTargetLabel: resolved.label,
             slot: { id: slot.id, letter: slot.letter, name: slot.name },
             titleHints,

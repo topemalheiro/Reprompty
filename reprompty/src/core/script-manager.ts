@@ -72,6 +72,8 @@ export const RESERVED_MCP_TOOL_NAMES = [
   "spawn_window",
   "list_spawn_targets",
   "list_virtual_desktops",
+  "ensure_virtual_desktop",
+  "rename_virtual_desktop",
   "send_prompt",
   "add_connection",
   "list_connections",

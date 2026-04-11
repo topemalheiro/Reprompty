@@ -81,6 +81,7 @@ Reprompty can save common folders as **spawn targets** so MCP clients can open V
    - Label (example: `Windows Project`)
    - Folder Path (example: `C:\Users\topem\Desktop\Windows Project`)
    - Optional window name
+   - Optional default desktop name
 3. Click **Save Target**.
 
 From MCP:
@@ -88,12 +89,38 @@ From MCP:
 ```text
 mcp__reprompty__list_spawn_targets
 
-mcp__reprompty__spawn_window { "target": "windows-project" }
-mcp__reprompty__spawn_and_layout { "target": "windows-project", "slot": "B" }
+mcp__reprompty__list_virtual_desktops
+
+mcp__reprompty__ensure_virtual_desktop { "name": "Aperant-MCP" }
+
+mcp__reprompty__rename_virtual_desktop { "currentName": "3", "newName": "Focus" }
+
+mcp__reprompty__spawn_window { "target": "windows-project", "desktop": "2" }
+mcp__reprompty__spawn_and_layout { "target": "windows-project", "slot": "B", "createDesktop": true }
 ```
 
 `spawn_window` and `spawn_and_layout` still support raw `folderPath` if you prefer not to use aliases.
+If `desktop` is supplied and missing, Reprompty creates it, switches there, and then spawns.
+If `createDesktop: true` is supplied without an explicit `desktop`, Reprompty creates a fresh desktop named from the saved target label first, otherwise the folder basename.
+Desktop-aware spawns switch first, then open VS Code there, so the new window does not briefly appear on the current desktop before moving.
 `spawn_and_layout` now waits for a uniquely identifiable VS Code window handle after spawn. If Reprompty cannot isolate one window safely, it returns an error instead of moving the wrong editor.
+
+## Virtual Desktop Management
+
+Reprompty now treats virtual desktops as a built-in backend capability rather than a script convention.
+
+- `list_virtual_desktops` returns desktop `index`, `name`, and `isCurrent`
+- `ensure_virtual_desktop` creates a named desktop if it is missing and does not switch desktops
+- `rename_virtual_desktop` renames an existing desktop by exact name
+- `spawn_window` and `spawn_and_layout` accept either:
+  - `desktop`: use or auto-create a named desktop
+  - `createDesktop: true`: create a fresh desktop for this spawn
+
+Important behavior:
+
+- Desktop names are the public contract for MCP and the Reprompty UI
+- Desktop names refresh from backend polling, so the Windows tab updates after rename
+- Spawn target defaults still work, but `createDesktop: true` overrides them for that one call so a fresh project desktop can be created on demand
 
 ## Script-Defined MCP Tools (Layout Presets)
 

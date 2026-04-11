@@ -19,12 +19,34 @@
 import { runMCPTool } from "../src/mcp/index.js";
 
 export type SpawnWindowParams =
-  | { target: string; windowName?: string }
-  | { folderPath: string; windowName?: string };
+  | {
+      target: string;
+      windowName?: string;
+      desktop?: string;
+      createDesktop?: boolean;
+    }
+  | {
+      folderPath: string;
+      windowName?: string;
+      desktop?: string;
+      createDesktop?: boolean;
+    };
 
 export type SpawnAndLayoutParams =
-  | { target: string; slot: string; windowName?: string }
-  | { folderPath: string; slot: string; windowName?: string };
+  | {
+      target: string;
+      slot: string;
+      windowName?: string;
+      desktop?: string;
+      createDesktop?: boolean;
+    }
+  | {
+      folderPath: string;
+      slot: string;
+      windowName?: string;
+      desktop?: string;
+      createDesktop?: boolean;
+    };
 
 export interface ApplyLayoutParams {
   slot: string;
@@ -37,7 +59,14 @@ export interface SpawnTargetInfo {
   label: string;
   folderPath: string;
   windowName?: string;
+  desktop?: string;
   addedAt: string;
+}
+
+export interface VirtualDesktopInfo {
+  index: number;
+  name: string;
+  isCurrent: boolean;
 }
 
 export interface SendPromptParams {
@@ -76,6 +105,30 @@ export const RepromptySkill = {
    */
   async list_spawn_targets(): Promise<string> {
     return runMCPTool("list_spawn_targets", {});
+  },
+
+  /**
+   * List Windows virtual desktops
+   */
+  async list_virtual_desktops(): Promise<string> {
+    return runMCPTool("list_virtual_desktops", {});
+  },
+
+  /**
+   * Ensure a named virtual desktop exists without switching to it
+   */
+  async ensure_virtual_desktop(params: { name: string }): Promise<string> {
+    return runMCPTool("ensure_virtual_desktop", params);
+  },
+
+  /**
+   * Rename a virtual desktop by exact name
+   */
+  async rename_virtual_desktop(params: {
+    currentName: string;
+    newName: string;
+  }): Promise<string> {
+    return runMCPTool("rename_virtual_desktop", params);
   },
 
   /**
@@ -161,22 +214,26 @@ Example usage:
 
 1. List targets + spawn a window using an alias:
    await reprompty.list_spawn_targets();
-   await reprompty.spawn_window({ target: "windows-project" });
+   await reprompty.spawn_window({ target: "windows-project", desktop: "2" });
 
-2. Add a connection:
+2. Create or rename desktops:
+   await reprompty.ensure_virtual_desktop({ name: "Aperant-MCP" });
+   await reprompty.rename_virtual_desktop({ currentName: "3", newName: "Focus" });
+
+3. Add a connection:
    await reprompty.add_connection({
      type: "vscode-window",
      name: "agent-1",
      config: { socketPath: "\\\\\\\\.\\\\pipe\\\\kilo-ipc-12345", method: "background" }
    });
 
-3. Send a prompt:
+4. Send a prompt:
    await reprompty.send_prompt({
      connectionId: "agent-1",
      prompt: "Create a TypeScript function that adds two numbers"
    });
 
-4. Daisy chain:
+5. Daisy chain:
    await reprompty.daisy_chain({
      prompts: [
        { connectionId: "agent-1", prompt: "Create a function" },
