@@ -2,6 +2,8 @@
 
 A framework for orchestrating multiple AI agent windows and prompt engineering workflows on Windows 11.
 
+<img width="882" height="689" alt="image" src="https://github.com/user-attachments/assets/1024641e-7c39-47cf-ac8b-fc85af916148" />
+
 ## Overview
 
 Reprompty enables you to:
