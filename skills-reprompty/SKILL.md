@@ -84,7 +84,33 @@ interface WebSocketConfig {
 List saved spawn target aliases for VS Code folders.
 
 ```typescript
-// Returns: Array<{ id: string; label: string; folderPath: string; windowName?: string }>
+// Returns: Array<{ id: string; label: string; folderPath: string; windowName?: string; desktop?: string }>
+```
+
+### list_virtual_desktops
+List Windows virtual desktops and indicate which one is current.
+
+```typescript
+// Returns: Array<{ index: number; name: string; isCurrent: boolean }>
+```
+
+### ensure_virtual_desktop
+Create a named Windows virtual desktop if it does not already exist, without switching to it.
+
+```typescript
+interface EnsureVirtualDesktopParams {
+  name: string;
+}
+```
+
+### rename_virtual_desktop
+Rename a Windows virtual desktop by exact name.
+
+```typescript
+interface RenameVirtualDesktopParams {
+  currentName: string;
+  newName: string;
+}
 ```
 
 ### spawn_window
@@ -92,20 +118,23 @@ Spawn a new VS Code window using a saved target alias or a raw project folder.
 
 ```typescript
 type SpawnWindowParams =
-  | { target: string; windowName?: string }
-  | { folderPath: string; windowName?: string };
+  | { target: string; windowName?: string; desktop?: string; createDesktop?: boolean }
+  | { folderPath: string; windowName?: string; desktop?: string; createDesktop?: boolean };
 ```
+
+If `desktop` is supplied and missing, Reprompty creates it, switches there, and then spawns. If `createDesktop: true` is supplied without an explicit `desktop`, Reprompty creates a fresh desktop named from the saved target label first, otherwise the folder basename.
 
 ### spawn_and_layout
 Spawn a VS Code window and apply a layout slot in one call.
 
 ```typescript
 type SpawnAndLayoutParams =
-  | { target: string; slot: string }
-  | { folderPath: string; slot: string };
+  | { target: string; slot: string; desktop?: string; createDesktop?: boolean }
+  | { folderPath: string; slot: string; desktop?: string; createDesktop?: boolean };
 ```
 
 Reprompty now isolates the spawned window by new handle first and only falls back to a unique title match. If it cannot identify one safe target, the tool fails instead of moving the wrong editor window.
+Desktop-aware spawns switch first, then spawn, then apply layout so the new editor window does not briefly appear on the current desktop.
 
 ### apply_layout
 Apply a saved layout slot to an existing VS Code window.
@@ -191,6 +220,13 @@ Built-in layout calls automatically pass `-WindowHandle` and `-LogPath` to compa
 - One-shot layout transcript: `%LOCALAPPDATA%\\VSCodeSidePanelLayout\\layout-run-<timestamp>.log`
 - CDP repair log: `%LOCALAPPDATA%\\VSCodeSidePanelLayout\\repair.log`
 
+## Virtual Desktop Notes
+
+- Desktop names are the public contract for MCP and UI, not numeric indices
+- Desktop names refresh from backend polling, so the Windows tab updates after rename
+- `ensure_virtual_desktop` is intentionally non-disruptive and does not switch desktops
+- Spawn flows are the place where Reprompty automatically switches desktops
+
 ## Background Messaging (No Foreground Focus)
 
 Similar to Kilo Code / Roo Code, Reprompty uses **IPC sockets** to send messages in the background without bringing windows to the foreground.
@@ -226,8 +262,16 @@ The extension listens on `KILO_IPC_SOCKET_PATH` or `ROO_CODE_IPC_SOCKET_PATH` en
 // List saved targets (token-friendly spawn aliases)
 await list_spawn_targets();
 
-// Spawn a window via target alias
-await spawn_window({ target: "windows-project" });
+// List or prepare desktops
+await list_virtual_desktops();
+await ensure_virtual_desktop({ name: "Aperant-MCP" });
+await rename_virtual_desktop({ currentName: "3", newName: "Focus" });
+
+// Spawn a window via target alias on an existing or auto-created desktop
+await spawn_window({ target: "windows-project", desktop: "2" });
+
+// Or create a fresh project desktop during spawn
+await spawn_and_layout({ target: "windows-project", slot: "B", createDesktop: true });
 
 // Add a VS Code window connection (background - uses IPC socket)
 await add_connection({

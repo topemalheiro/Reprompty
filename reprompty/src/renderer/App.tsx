@@ -534,16 +534,19 @@ function App() {
             <h2 style={styles.panelTitle}>Spawn VS Code Window</h2>
             <div style={styles.spawnHelp}>
               <div style={styles.helpCard}>
-                <strong style={styles.helpTitle}>Built-in MCP Spawn Tools</strong>
+                <strong style={styles.helpTitle}>Built-in MCP Spawn/Desktop Tools</strong>
                 <div style={styles.helpBody}>
-                  `spawn_window` and `spawn_and_layout` now accept `target` aliases instead of full
-                  paths.
+                  `spawn_window` and `spawn_and_layout` accept `target` aliases plus optional
+                  `desktop` or `createDesktop`. `list_virtual_desktops`,
+                  `ensure_virtual_desktop`, and `rename_virtual_desktop` manage desktop names from
+                  the backend.
                 </div>
               </div>
               <div style={styles.helpCard}>
                 <strong style={styles.helpTitle}>Example</strong>
                 <code style={styles.helpCode}>
-                  spawn_window {`{ "target": "${selectedTargetPreview}" }`}
+                  spawn_and_layout
+                  {`{ "target": "${selectedTargetPreview}", "slot": "B", "createDesktop": true }`}
                 </code>
               </div>
             </div>
@@ -570,7 +573,8 @@ function App() {
                 {renderDesktopOptions(quickDesktopName)}
               </select>
               <div style={styles.desktopHint}>
-                Available desktops: {virtualDesktopSummary || "No virtual desktops detected"}
+                Available desktops: {virtualDesktopSummary || "No virtual desktops detected"}. MCP
+                can also create a fresh desktop per spawn with `createDesktop: true`.
               </div>
               <button style={{ ...styles.btn, marginTop: 12 }} onClick={spawnWindow}>
                 Spawn Window

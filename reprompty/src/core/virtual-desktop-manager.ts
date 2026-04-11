@@ -14,6 +14,16 @@ export interface WindowDesktopInfo {
   isCurrentDesktop: boolean;
 }
 
+export interface VirtualDesktopMutationResult {
+  success: boolean;
+  desktop?: VirtualDesktopInfo;
+  error?: string;
+}
+
+export interface EnsureVirtualDesktopResult extends VirtualDesktopMutationResult {
+  created: boolean;
+}
+
 interface RawVirtualDesktop {
   index?: unknown;
   Number?: unknown;
@@ -79,6 +89,130 @@ function coerceDesktopName(name: unknown, fallbackIndex: number): string {
 
 function normalizeDesktopLookupName(name?: string | null): string {
   return (name ?? "").trim().toLowerCase();
+}
+
+function escapePowerShellSingleQuotes(value: string): string {
+  return value.replace(/'/g, "''");
+}
+
+export function deriveVirtualDesktopName(
+  preferredLabel?: string | null,
+  folderPath?: string | null
+): string | undefined {
+  const trimmedLabel = (preferredLabel ?? "").trim();
+  if (trimmedLabel) {
+    return trimmedLabel;
+  }
+
+  const trimmedPath = (folderPath ?? "").trim();
+  if (!trimmedPath) {
+    return undefined;
+  }
+
+  const normalizedPath = trimmedPath.replace(/[\\/]+$/, "");
+  const folderName =
+    nodePath.win32.basename(normalizedPath) ||
+    nodePath.posix.basename(normalizedPath);
+  const trimmedFolderName = folderName.trim();
+  return trimmedFolderName || undefined;
+}
+
+export function makeUniqueVirtualDesktopName(
+  desktops: VirtualDesktopInfo[],
+  requestedName: string
+): string {
+  const baseName = requestedName.trim();
+  if (!baseName) {
+    throw new Error("Desktop name is required");
+  }
+
+  const existingNames = new Set(
+    desktops.map((desktop) => normalizeDesktopLookupName(desktop.name))
+  );
+  if (!existingNames.has(normalizeDesktopLookupName(baseName))) {
+    return baseName;
+  }
+
+  let suffix = 2;
+  while (
+    existingNames.has(normalizeDesktopLookupName(`${baseName} ${suffix}`))
+  ) {
+    suffix += 1;
+  }
+
+  return `${baseName} ${suffix}`;
+}
+
+export function planEnsureVirtualDesktop(
+  desktops: VirtualDesktopInfo[],
+  requestedName: string
+): { existingDesktop?: VirtualDesktopInfo; shouldCreate: boolean; error?: string } {
+  const normalizedName = normalizeDesktopLookupName(requestedName);
+  if (!normalizedName) {
+    return { shouldCreate: false, error: "Desktop name is required" };
+  }
+
+  const matches = desktops.filter(
+    (desktop) => normalizeDesktopLookupName(desktop.name) === normalizedName
+  );
+
+  if (matches.length === 1) {
+    return { existingDesktop: matches[0], shouldCreate: false };
+  }
+
+  if (matches.length > 1) {
+    return {
+      shouldCreate: false,
+      error: `Desktop "${requestedName}" matched multiple desktops`,
+    };
+  }
+
+  return { shouldCreate: true };
+}
+
+export function validateVirtualDesktopRename(
+  desktops: VirtualDesktopInfo[],
+  currentName: string,
+  newName: string
+): {
+  currentDesktop?: VirtualDesktopInfo;
+  normalizedNewName?: string;
+  noChange?: boolean;
+  error?: string;
+} {
+  const currentResolution = resolveVirtualDesktopByName(desktops, currentName);
+  if (!currentResolution.desktop) {
+    return { error: currentResolution.error };
+  }
+
+  const normalizedNewName = newName.trim();
+  if (!normalizedNewName) {
+    return { error: "New desktop name is required" };
+  }
+
+  const currentNormalizedName = normalizeDesktopLookupName(
+    currentResolution.desktop.name
+  );
+  const nextNormalizedName = normalizeDesktopLookupName(normalizedNewName);
+  if (currentNormalizedName === nextNormalizedName) {
+    return {
+      currentDesktop: currentResolution.desktop,
+      normalizedNewName,
+      noChange: true,
+    };
+  }
+
+  const destinationMatches = desktops.filter(
+    (desktop) => normalizeDesktopLookupName(desktop.name) === nextNormalizedName
+  );
+  if (destinationMatches.length > 0) {
+    return { error: `Desktop "${normalizedNewName}" already exists` };
+  }
+
+  return {
+    currentDesktop: currentResolution.desktop,
+    normalizedNewName,
+  };
 }
 
 function runVirtualDesktopJson(scriptBody: string): unknown {
@@ -203,6 +337,147 @@ $desktops | ConvertTo-Json -Compress
 `);
 
   return normalizeVirtualDesktopList(result);
+}
+
+export async function createVirtualDesktop(
+  name?: string
+): Promise<VirtualDesktopMutationResult> {
+  try {
+    const requestedName = name?.trim();
+    if (name !== undefined && !requestedName) {
+      return { success: false, error: "Desktop name is required" };
+    }
+
+    runVirtualDesktopJson(`
+$newDesktop = New-Desktop
+if ('${escapePowerShellSingleQuotes(requestedName ?? "")}' -ne '') {
+  $newDesktop = Set-DesktopName -Desktop $newDesktop -Name '${escapePowerShellSingleQuotes(
+    requestedName ?? ""
+  )}' -PassThru
+}
+Start-Sleep -Milliseconds 250
+[pscustomobject]@{ success = $true } | ConvertTo-Json -Compress
+`);
+
+    const desktops = await listVirtualDesktops();
+    const createdDesktop = requestedName
+      ? resolveVirtualDesktopByName(desktops, requestedName).desktop
+      : [...desktops].sort((left, right) => right.index - left.index)[0];
+
+    if (!createdDesktop) {
+      return {
+        success: false,
+        error: requestedName
+          ? `Created desktop "${requestedName}" could not be resolved`
+          : "Created desktop could not be resolved",
+      };
+    }
+
+    return { success: true, desktop: createdDesktop };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+export async function ensureVirtualDesktop(
+  requestedName: string
+): Promise<EnsureVirtualDesktopResult> {
+  try {
+    const desktops = await listVirtualDesktops();
+    const plan = planEnsureVirtualDesktop(desktops, requestedName);
+
+    if (plan.error) {
+      return { success: false, created: false, error: plan.error };
+    }
+
+    if (plan.existingDesktop) {
+      return {
+        success: true,
+        created: false,
+        desktop: plan.existingDesktop,
+      };
+    }
+
+    const created = await createVirtualDesktop(requestedName);
+    return {
+      ...created,
+      created: created.success,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      created: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+export async function renameVirtualDesktop(
+  currentName: string,
+  newName: string
+): Promise<VirtualDesktopMutationResult> {
+  try {
+    const desktops = await listVirtualDesktops();
+    const validation = validateVirtualDesktopRename(
+      desktops,
+      currentName,
+      newName
+    );
+
+    if (validation.error) {
+      return { success: false, error: validation.error };
+    }
+
+    if (!validation.currentDesktop || !validation.normalizedNewName) {
+      return { success: false, error: "Desktop rename could not be prepared" };
+    }
+
+    if (validation.noChange) {
+      return {
+        success: true,
+        desktop: {
+          ...validation.currentDesktop,
+          name: validation.normalizedNewName,
+        },
+      };
+    }
+
+    runVirtualDesktopJson(`
+$desktop = Get-Desktop -Index ${validation.currentDesktop.index}
+Set-DesktopName -Desktop $desktop -Name '${escapePowerShellSingleQuotes(
+      validation.normalizedNewName
+    )}' | Out-Null
+Start-Sleep -Milliseconds 250
+[pscustomobject]@{ success = $true } | ConvertTo-Json -Compress
+`);
+
+    const refreshedDesktops = await listVirtualDesktops();
+    const refreshed = resolveVirtualDesktopByName(
+      refreshedDesktops,
+      validation.normalizedNewName
+    );
+    if (!refreshed.desktop) {
+      return {
+        success: false,
+        error:
+          refreshed.error ||
+          `Renamed desktop "${validation.normalizedNewName}" could not be resolved`,
+      };
+    }
+
+    return {
+      success: true,
+      desktop: refreshed.desktop,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 export async function switchToVirtualDesktop(

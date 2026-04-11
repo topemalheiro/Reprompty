@@ -61,6 +61,18 @@ const BUILT_IN_MCP_TOOLS = [
     description: "List the short target aliases available to MCP clients.",
   },
   {
+    name: "list_virtual_desktops",
+    description: "List the current Windows virtual desktops and their names.",
+  },
+  {
+    name: "ensure_virtual_desktop",
+    description: "Create a named desktop if it does not exist without switching to it.",
+  },
+  {
+    name: "rename_virtual_desktop",
+    description: "Rename an existing desktop by exact name.",
+  },
+  {
     name: "apply_layout",
     description: "Apply a saved layout slot to the active or targeted window.",
   },
