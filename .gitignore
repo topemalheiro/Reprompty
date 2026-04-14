@@ -18,3 +18,14 @@ Thumbs.db
 
 # Cloned repos
 openclaw/
+
+# Aperant-MCP data directory
+.auto-claude/
+
+# Aperant-MCP generated files
+.auto-claude-security.json
+.auto-claude-status
+.claude_settings.json
+.worktrees/
+.security-key
+logs/security/
