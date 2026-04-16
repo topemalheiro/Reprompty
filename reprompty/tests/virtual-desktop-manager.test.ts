@@ -3,6 +3,7 @@ import { describe, expect, it } from "bun:test";
 import {
   deriveVirtualDesktopName,
   makeUniqueVirtualDesktopName,
+  moveWindowToVirtualDesktop,
   normalizeVirtualDesktopList,
   planEnsureVirtualDesktop,
   resolveVirtualDesktopByName,
@@ -121,5 +122,12 @@ describe("virtual desktop helpers", () => {
       currentDesktop: desktops[1],
       normalizedNewName: "Deep Work",
     });
+  });
+
+  it("fails clearly when moveWindowToVirtualDesktop gets an invalid handle", async () => {
+    const result = await moveWindowToVirtualDesktop(0, "1");
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("positive integer");
   });
 });

@@ -96,13 +96,14 @@ mcp__reprompty__ensure_virtual_desktop { "name": "Aperant-MCP" }
 mcp__reprompty__rename_virtual_desktop { "currentName": "3", "newName": "Focus" }
 
 mcp__reprompty__spawn_window { "target": "windows-project", "desktop": "2" }
+mcp__reprompty__spawn_window { "target": "windows-project", "desktop": "2", "activateDesktop": true }
 mcp__reprompty__spawn_and_layout { "target": "windows-project", "slot": "B", "createDesktop": true }
 ```
 
 `spawn_window` and `spawn_and_layout` still support raw `folderPath` if you prefer not to use aliases.
-If `desktop` is supplied and missing, Reprompty creates it, switches there, and then spawns.
+If `desktop` is supplied and missing, Reprompty creates it and targets that desktop for the spawn.
 If `createDesktop: true` is supplied without an explicit `desktop`, Reprompty creates a fresh desktop named from the saved target label first, otherwise the folder basename.
-Desktop-aware spawns switch first, then open VS Code there, so the new window does not briefly appear on the current desktop before moving.
+Desktop-aware spawns stay on your current desktop by default: Reprompty spawns VS Code, isolates the new window handle, and moves that exact window to the target desktop. If you explicitly want the old switch-first behavior, pass `"activateDesktop": true`.
 `spawn_and_layout` now waits for a uniquely identifiable VS Code window handle after spawn. If Reprompty cannot isolate one window safely, it returns an error instead of moving the wrong editor.
 
 ## Virtual Desktop Management
@@ -115,12 +116,14 @@ Reprompty now treats virtual desktops as a built-in backend capability rather th
 - `spawn_window` and `spawn_and_layout` accept either:
   - `desktop`: use or auto-create a named desktop
   - `createDesktop: true`: create a fresh desktop for this spawn
+  - `activateDesktop: true`: opt into switching desktops before the spawn
 
 Important behavior:
 
 - Desktop names are the public contract for MCP and the Reprompty UI
 - Desktop names refresh from backend polling, so the Windows tab updates after rename
 - Spawn target defaults still work, but `createDesktop: true` overrides them for that one call so a fresh project desktop can be created on demand
+- Desktop-aware spawns no longer switch by default; repeated calls are the intended way to set up multiple desktops and windows while you stay on the current workspace
 
 ## Script-Defined MCP Tools (Layout Presets)
 

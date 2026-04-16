@@ -24,6 +24,12 @@ export interface EnsureVirtualDesktopResult extends VirtualDesktopMutationResult
   created: boolean;
 }
 
+export interface MoveWindowToVirtualDesktopResult
+  extends VirtualDesktopMutationResult {
+  handle?: number;
+  isCurrentDesktop?: boolean;
+}
+
 interface RawVirtualDesktop {
   index?: unknown;
   Number?: unknown;
@@ -514,6 +520,55 @@ Start-Sleep -Milliseconds 250
   } catch (error) {
     return {
       success: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+export async function moveWindowToVirtualDesktop(
+  windowHandle: number,
+  requestedName: string
+): Promise<MoveWindowToVirtualDesktopResult> {
+  try {
+    if (!Number.isFinite(windowHandle) || !Number.isInteger(windowHandle) || windowHandle <= 0) {
+      return { success: false, error: "Window handle must be a positive integer" };
+    }
+
+    const desktops = await listVirtualDesktops();
+    const resolved = resolveVirtualDesktopByName(desktops, requestedName);
+    if (!resolved.desktop) {
+      return {
+        success: false,
+        handle: windowHandle,
+        error: resolved.error,
+      };
+    }
+
+    runVirtualDesktopJson(`
+$desktop = Get-Desktop -Index ${resolved.desktop.index}
+Move-Window -Desktop $desktop -Hwnd ([IntPtr]${windowHandle}) | Out-Null
+Start-Sleep -Milliseconds 250
+[pscustomobject]@{ success = $true } | ConvertTo-Json -Compress
+`);
+
+    const refreshedDesktops = await listVirtualDesktops();
+    const refreshedDesktop =
+      resolveVirtualDesktopByName(refreshedDesktops, requestedName).desktop ??
+      resolved.desktop;
+    const assignments = await getWindowDesktopAssignments([windowHandle]);
+    const assignment = assignments.find((entry) => entry.handle === windowHandle);
+
+    return {
+      success: true,
+      handle: windowHandle,
+      desktop: refreshedDesktop,
+      isCurrentDesktop:
+        assignment?.isCurrentDesktop ?? refreshedDesktop?.isCurrent ?? false,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      handle: windowHandle,
       error: error instanceof Error ? error.message : String(error),
     };
   }

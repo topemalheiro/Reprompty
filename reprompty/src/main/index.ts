@@ -412,10 +412,25 @@ electron.ipcMain.handle("send-to-detected", async (_event: any, args: { window: 
   };
 });
 
-electron.ipcMain.handle("spawn-window", async (_event: any, args: { folderPath: string; windowName?: string; desktop?: string }) => {
+electron.ipcMain.handle("spawn-window", async (_event: any, args: { folderPath: string; windowName?: string; desktop?: string; activateDesktop?: boolean }) => {
   try {
-    const { spawnWindow } = await import("../platform/windows.js");
-    return spawnWindow(args.folderPath, args.windowName, args.desktop);
+    const { callTool } = await import("../mcp/index.js");
+    const result = await callTool("spawn_window", {
+      folderPath: args.folderPath,
+      windowName: args.windowName,
+      desktop: args.desktop,
+      activateDesktop: args.activateDesktop,
+    });
+    const payload = result.content[0]?.text ?? "";
+
+    try {
+      return JSON.parse(payload);
+    } catch {
+      return {
+        success: false,
+        error: payload || "Failed to spawn VS Code window",
+      };
+    }
   } catch (err) {
     return { success: false, error: String(err) };
   }
