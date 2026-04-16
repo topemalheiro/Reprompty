@@ -235,6 +235,8 @@ Built-in layout calls automatically pass `-WindowHandle` and `-LogPath` to compa
 - Tell the agent to first check whether the relevant project tab is already open in Aperant
 - If the project tab already exists, reuse it, skip `open_project`, and do not create a duplicate project tab
 - Do not tell the agent to launch or relaunch Aperant as part of this handoff unless the user explicitly asked for a start/restart
+- Only arm the specific project(s) the user explicitly named
+- Do not infer an extra controller/current project and do not open `Reprompty` or any other project tab unless the user explicitly asked for that separate project
 - Match the chain to the user's wording:
   - if they say to fully arm Aperant, include the full chain
   - if they say only certain parts or exclude certain parts, remove the unrelated tool calls
