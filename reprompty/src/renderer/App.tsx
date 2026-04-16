@@ -44,6 +44,7 @@ interface ElectronAPI {
     folderPath: string;
     windowName?: string;
     desktop?: string;
+    activateDesktop?: boolean;
   }) => Promise<SpawnWindowResult>;
   listSpawnTargets: () => Promise<SpawnTarget[]>;
   listVirtualDesktops: () => Promise<VirtualDesktopInfo[]>;
@@ -441,6 +442,10 @@ function App() {
                 {detectedWindows.length} found (auto-refreshes)
               </span>
             </div>
+            <div style={styles.desktopHint}>
+              Desktop labels refresh from backend polling. Desktop-aware spawns now stay on your
+              current desktop unless `activateDesktop: true` is explicitly requested.
+            </div>
             {detectedWindows.length === 0 ? (
               <p style={styles.empty}>No VS Code / Kilo Code windows detected</p>
             ) : (
@@ -537,9 +542,10 @@ function App() {
                 <strong style={styles.helpTitle}>Built-in MCP Spawn/Desktop Tools</strong>
                 <div style={styles.helpBody}>
                   `spawn_window` and `spawn_and_layout` accept `target` aliases plus optional
-                  `desktop` or `createDesktop`. `list_virtual_desktops`,
-                  `ensure_virtual_desktop`, and `rename_virtual_desktop` manage desktop names from
-                  the backend.
+                  `desktop`, `createDesktop`, and `activateDesktop`. Desktop-aware spawns stay on
+                  the current desktop by default and only switch when `activateDesktop: true` is
+                  supplied. `list_virtual_desktops`, `ensure_virtual_desktop`, and
+                  `rename_virtual_desktop` manage desktop names from the backend.
                 </div>
               </div>
               <div style={styles.helpCard}>
@@ -574,7 +580,8 @@ function App() {
               </select>
               <div style={styles.desktopHint}>
                 Available desktops: {virtualDesktopSummary || "No virtual desktops detected"}. MCP
-                can also create a fresh desktop per spawn with `createDesktop: true`.
+                can also create a fresh desktop per spawn with `createDesktop: true`, and it stays
+                on your current desktop unless `activateDesktop: true` is requested.
               </div>
               <button style={{ ...styles.btn, marginTop: 12 }} onClick={spawnWindow}>
                 Spawn Window

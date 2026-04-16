@@ -20,6 +20,7 @@ import {
   ensureVirtualDesktop,
   listVirtualDesktops,
   makeUniqueVirtualDesktopName,
+  moveWindowToVirtualDesktop,
   renameVirtualDesktop,
   switchToVirtualDesktop,
   type VirtualDesktopInfo,
@@ -58,6 +59,7 @@ type ResolvedSpawnInput =
       explicitDesktop?: string;
       defaultDesktop?: string;
       createDesktop: boolean;
+      activateDesktop: boolean;
       label: string;
       targetLabel?: string;
     }
@@ -75,12 +77,18 @@ const BUILT_IN_TOOLS: MCPTool[] = [
         windowName: { type: "string", description: "Optional name for the window" },
         desktop: {
           type: "string",
-          description: "Optional virtual desktop name to switch to before spawning",
+          description:
+            "Optional virtual desktop name to use or auto-create for this spawn",
         },
         createDesktop: {
           type: "boolean",
           description:
             "Optional: create a fresh desktop for this spawn when no explicit desktop name is supplied",
+        },
+        activateDesktop: {
+          type: "boolean",
+          description:
+            "Optional: switch to the target desktop before spawning. Defaults to false.",
         },
       },
     },
@@ -295,12 +303,18 @@ const BUILT_IN_TOOLS: MCPTool[] = [
         windowName: { type: "string", description: "Optional name for the window" },
         desktop: {
           type: "string",
-          description: "Optional virtual desktop name to switch to before spawning",
+          description:
+            "Optional virtual desktop name to use or auto-create for this spawn",
         },
         createDesktop: {
           type: "boolean",
           description:
             "Optional: create a fresh desktop for this spawn when no explicit desktop name is supplied",
+        },
+        activateDesktop: {
+          type: "boolean",
+          description:
+            "Optional: switch to the target desktop before spawning. Defaults to false.",
         },
         slot: {
           type: "string",
@@ -376,6 +390,7 @@ function resolveSpawnInput(args: Record<string, unknown>): ResolvedSpawnInput {
   const explicitDesktop =
     typeof args.desktop === "string" ? args.desktop.trim() : "";
   const createDesktop = parseBooleanArg(args.createDesktop);
+  const activateDesktop = parseBooleanArg(args.activateDesktop);
 
   if (target) {
     const savedTarget = spawnTargetManager.getTarget(target);
@@ -388,6 +403,7 @@ function resolveSpawnInput(args: Record<string, unknown>): ResolvedSpawnInput {
       explicitDesktop: explicitDesktop || undefined,
       defaultDesktop: resolveSpawnTargetDesktop(undefined, savedTarget.desktop),
       createDesktop,
+      activateDesktop,
       label: `${savedTarget.label} (${savedTarget.id})`,
       targetLabel: savedTarget.label,
     };
@@ -403,6 +419,7 @@ function resolveSpawnInput(args: Record<string, unknown>): ResolvedSpawnInput {
     explicitDesktop: explicitDesktop || undefined,
     defaultDesktop: undefined,
     createDesktop,
+    activateDesktop,
     label: explicitFolderPath,
   };
 }
@@ -466,6 +483,17 @@ function formatVirtualDesktopSummary(
   fallbackName?: string
 ): string | undefined {
   return desktop?.name || fallbackName;
+}
+
+export function resolveDesktopActivationMode(
+  desktop: string | undefined,
+  activateDesktop: boolean
+): "none" | "switch-before-spawn" | "move-after-spawn" {
+  if (!desktop) {
+    return "none";
+  }
+
+  return activateDesktop ? "switch-before-spawn" : "move-after-spawn";
 }
 
 async function prepareSpawnDesktop(
@@ -647,6 +675,375 @@ async function waitForSpawnedWindow(
   };
 }
 
+async function executeSpawnWorkflow(
+  resolved: Exclude<ResolvedSpawnInput, { error: string }>,
+  options: {
+    slot?: NonNullable<ReturnType<typeof resolveLayoutSlot>>;
+    requestedTarget?: string | null;
+  } = {}
+): Promise<Record<string, unknown>> {
+  const requestedDesktop = resolveRequestedDesktopName(resolved) ?? null;
+  const desktopResolution = await prepareSpawnDesktop(resolved);
+  if (!desktopResolution.success) {
+    return {
+      success: false,
+      stage: "resolve_desktop",
+      requestedFolderPath: resolved.folderPath,
+      requestedWindowName: resolved.windowName ?? null,
+      requestedDesktop,
+      createDesktop: resolved.createDesktop,
+      activateDesktop: resolved.activateDesktop,
+      spawnTargetLabel: resolved.label,
+      slot: options.slot
+        ? { id: options.slot.id, letter: options.slot.letter, name: options.slot.name }
+        : null,
+      error: desktopResolution.error,
+    };
+  }
+
+  const desktopActivationMode = resolveDesktopActivationMode(
+    desktopResolution.desktop,
+    resolved.activateDesktop
+  );
+
+  logToolEvent("spawn workflow desktop resolution", {
+    requestedTarget: options.requestedTarget ?? null,
+    requestedFolderPath: resolved.folderPath,
+    requestedWindowName: resolved.windowName ?? null,
+    requestedDesktop,
+    createDesktop: resolved.createDesktop,
+    activateDesktop: resolved.activateDesktop,
+    desktopMode: desktopResolution.desktopMode,
+    desktopActivationMode,
+    effectiveDesktop: desktopResolution.desktop ?? null,
+    createdDesktop: desktopResolution.createdDesktop,
+  });
+
+  if (
+    desktopActivationMode === "switch-before-spawn" &&
+    desktopResolution.desktop
+  ) {
+    const desktopResult = await switchToVirtualDesktop(desktopResolution.desktop);
+    logToolEvent("spawn workflow desktop switch", {
+      requestedTarget: options.requestedTarget ?? null,
+      requestedFolderPath: resolved.folderPath,
+      requestedDesktop,
+      effectiveDesktop: desktopResolution.desktop,
+      activateDesktop: resolved.activateDesktop,
+      createDesktop: resolved.createDesktop,
+      createdDesktop: desktopResolution.createdDesktop,
+      desktopMode: desktopResolution.desktopMode,
+      success: desktopResult.success,
+      error: desktopResult.error,
+    });
+
+    if (!desktopResult.success) {
+      return {
+        success: false,
+        stage: "switch_desktop",
+        requestedFolderPath: resolved.folderPath,
+        requestedWindowName: resolved.windowName ?? null,
+        requestedDesktop,
+        effectiveDesktop: desktopResolution.desktop,
+        createDesktop: resolved.createDesktop,
+        activateDesktop: resolved.activateDesktop,
+        desktopMode: desktopResolution.desktopMode,
+        desktopActivationMode,
+        createdDesktop: desktopResolution.createdDesktop,
+        spawnTargetLabel: resolved.label,
+        slot: options.slot
+          ? { id: options.slot.id, letter: options.slot.letter, name: options.slot.name }
+          : null,
+        error: desktopResult.error,
+      };
+    }
+  }
+
+  const baselineWindows = await detectWindows();
+  const titleHints = buildSpawnTitleHints({
+    folderPath: resolved.folderPath,
+    windowName: resolved.windowName,
+  });
+
+  logToolEvent("spawn workflow baseline", {
+    requestedTarget: options.requestedTarget ?? null,
+    requestedFolderPath: resolved.folderPath,
+    requestedWindowName: resolved.windowName ?? null,
+    requestedDesktop,
+    effectiveDesktop: desktopResolution.desktop ?? null,
+    createDesktop: resolved.createDesktop,
+    activateDesktop: resolved.activateDesktop,
+    createdDesktop: desktopResolution.createdDesktop,
+    desktopMode: desktopResolution.desktopMode,
+    desktopActivationMode,
+    slot: options.slot?.letter ?? null,
+    slotName: options.slot?.name ?? null,
+    titleHints,
+    baselineHandles: baselineWindows.map(formatWindowSummary),
+  });
+
+  const spawnResult = await spawnWindow(resolved.folderPath, resolved.windowName);
+  if (!spawnResult.success) {
+    logToolEvent("spawn workflow spawn failed", {
+      requestedTarget: options.requestedTarget ?? null,
+      requestedFolderPath: resolved.folderPath,
+      requestedDesktop,
+      effectiveDesktop: desktopResolution.desktop ?? null,
+      createDesktop: resolved.createDesktop,
+      activateDesktop: resolved.activateDesktop,
+      createdDesktop: desktopResolution.createdDesktop,
+      desktopMode: desktopResolution.desktopMode,
+      desktopActivationMode,
+      slot: options.slot?.letter ?? null,
+      message: spawnResult.message,
+    });
+
+    return {
+      success: false,
+      stage: "spawn",
+      requestedFolderPath: resolved.folderPath,
+      requestedWindowName: resolved.windowName ?? null,
+      requestedDesktop,
+      effectiveDesktop: desktopResolution.desktop ?? null,
+      createDesktop: resolved.createDesktop,
+      activateDesktop: resolved.activateDesktop,
+      createdDesktop: desktopResolution.createdDesktop,
+      desktopMode: desktopResolution.desktopMode,
+      desktopActivationMode,
+      spawnTargetLabel: resolved.label,
+      slot: options.slot
+        ? { id: options.slot.id, letter: options.slot.letter, name: options.slot.name }
+        : null,
+      error: spawnResult.message,
+    };
+  }
+
+  const selection = await waitForSpawnedWindow(baselineWindows, titleHints);
+  logToolEvent("spawn workflow window selection", {
+    requestedTarget: options.requestedTarget ?? null,
+    requestedFolderPath: resolved.folderPath,
+    requestedDesktop,
+    effectiveDesktop: desktopResolution.desktop ?? null,
+    createDesktop: resolved.createDesktop,
+    activateDesktop: resolved.activateDesktop,
+    createdDesktop: desktopResolution.createdDesktop,
+    desktopMode: desktopResolution.desktopMode,
+    desktopActivationMode,
+    slot: options.slot?.letter ?? null,
+    reason: selection.reason,
+    candidateHandles: selection.newCandidates.map(formatWindowSummary),
+    finalHandles: selection.finalWindows.map(formatWindowSummary),
+    matchedWindow: selection.matchedWindow
+      ? formatWindowSummary(selection.matchedWindow)
+      : null,
+  });
+
+  const requiresExactWindow =
+    Boolean(options.slot) || desktopActivationMode === "move-after-spawn";
+
+  let matchedWindow = selection.matchedWindow;
+  let finalWindows = selection.finalWindows;
+  let moveResult:
+    | Awaited<ReturnType<typeof moveWindowToVirtualDesktop>>
+    | undefined;
+
+  if (!matchedWindow && requiresExactWindow) {
+    return {
+      success: false,
+      stage: "select_window",
+      requestedFolderPath: resolved.folderPath,
+      requestedWindowName: resolved.windowName ?? null,
+      requestedDesktop,
+      effectiveDesktop: desktopResolution.desktop ?? null,
+      createDesktop: resolved.createDesktop,
+      activateDesktop: resolved.activateDesktop,
+      createdDesktop: desktopResolution.createdDesktop,
+      desktopMode: desktopResolution.desktopMode,
+      desktopActivationMode,
+      spawnTargetLabel: resolved.label,
+      slot: options.slot
+        ? { id: options.slot.id, letter: options.slot.letter, name: options.slot.name }
+        : null,
+      titleHints,
+      baselineHandles: baselineWindows.map(formatWindowSummary),
+      candidateHandles: selection.newCandidates.map(formatWindowSummary),
+      finalHandles: selection.finalWindows.map(formatWindowSummary),
+      error: `Unable to isolate a unique spawned VS Code window: ${selection.reason}`,
+    };
+  }
+
+  if (
+    matchedWindow &&
+    desktopActivationMode === "move-after-spawn" &&
+    desktopResolution.desktop
+  ) {
+    moveResult = await moveWindowToVirtualDesktop(
+      matchedWindow.handle,
+      desktopResolution.desktop
+    );
+
+    logToolEvent("spawn workflow desktop move", {
+      requestedTarget: options.requestedTarget ?? null,
+      requestedFolderPath: resolved.folderPath,
+      requestedDesktop,
+      effectiveDesktop: desktopResolution.desktop,
+      activateDesktop: resolved.activateDesktop,
+      desktopMode: desktopResolution.desktopMode,
+      desktopActivationMode,
+      matchedWindow: formatWindowSummary(matchedWindow),
+      success: moveResult.success,
+      error: moveResult.error,
+      desktop: moveResult.desktop?.name ?? null,
+      isCurrentDesktop: moveResult.isCurrentDesktop ?? null,
+    });
+
+    if (!moveResult.success) {
+      return {
+        success: false,
+        stage: "move_window",
+        requestedFolderPath: resolved.folderPath,
+        requestedWindowName: resolved.windowName ?? null,
+        requestedDesktop,
+        effectiveDesktop: desktopResolution.desktop,
+        createDesktop: resolved.createDesktop,
+        activateDesktop: resolved.activateDesktop,
+        createdDesktop: desktopResolution.createdDesktop,
+        desktopMode: desktopResolution.desktopMode,
+        desktopActivationMode,
+        spawnTargetLabel: resolved.label,
+        slot: options.slot
+          ? { id: options.slot.id, letter: options.slot.letter, name: options.slot.name }
+          : null,
+        matchedWindow,
+        error: moveResult.error,
+      };
+    }
+
+    finalWindows = await detectWindows();
+    matchedWindow =
+      finalWindows.find((window) => window.handle === matchedWindow?.handle) ??
+      matchedWindow;
+  }
+
+  const summaryParts = [spawnResult.message];
+  if (
+    desktopActivationMode === "switch-before-spawn" &&
+    desktopResolution.desktop
+  ) {
+    summaryParts.push(`Activated desktop ${desktopResolution.desktop} before spawn`);
+  }
+  if (
+    desktopActivationMode === "move-after-spawn" &&
+    desktopResolution.desktop &&
+    matchedWindow
+  ) {
+    summaryParts.push(
+      `Moved window handle ${matchedWindow.handle} to desktop ${desktopResolution.desktop}`
+    );
+  }
+
+  if (!options.slot) {
+    return {
+      success: true,
+      message: summaryParts.join(". "),
+      requestedFolderPath: resolved.folderPath,
+      requestedWindowName: resolved.windowName ?? null,
+      requestedDesktop,
+      effectiveDesktop:
+        desktopResolution.desktop ?? matchedWindow?.desktop ?? null,
+      createDesktop: resolved.createDesktop,
+      activateDesktop: resolved.activateDesktop,
+      createdDesktop: desktopResolution.createdDesktop,
+      desktopMode: desktopResolution.desktopMode,
+      desktopActivationMode,
+      derivedDesktopBaseName: desktopResolution.derivedDesktopBaseName ?? null,
+      spawnTargetLabel: resolved.label,
+      titleHints,
+      baselineHandles: baselineWindows.map(formatWindowSummary),
+      candidateHandles: selection.newCandidates.map(formatWindowSummary),
+      finalHandles: finalWindows.map(formatWindowSummary),
+      matchedWindow,
+      selectionReason: selection.reason,
+      selectionWarning:
+        matchedWindow || requiresExactWindow ? null : selection.reason,
+      moveResult: moveResult ?? null,
+    };
+  }
+
+  if (!matchedWindow) {
+    return {
+      success: false,
+      stage: "select_window",
+      requestedFolderPath: resolved.folderPath,
+      requestedWindowName: resolved.windowName ?? null,
+      requestedDesktop,
+      effectiveDesktop: desktopResolution.desktop ?? null,
+      createDesktop: resolved.createDesktop,
+      activateDesktop: resolved.activateDesktop,
+      createdDesktop: desktopResolution.createdDesktop,
+      desktopMode: desktopResolution.desktopMode,
+      desktopActivationMode,
+      spawnTargetLabel: resolved.label,
+      slot: { id: options.slot.id, letter: options.slot.letter, name: options.slot.name },
+      error: `Unable to isolate a unique spawned VS Code window: ${selection.reason}`,
+    };
+  }
+
+  const target: LayoutTarget = {
+    windowHandle: matchedWindow.handle,
+    windowTitle: matchedWindow.title,
+  };
+  const layoutResult = await layoutManager.applySlot(options.slot.id, target);
+
+  logToolEvent("spawn workflow layout result", {
+    requestedTarget: options.requestedTarget ?? null,
+    requestedFolderPath: resolved.folderPath,
+    requestedDesktop,
+    effectiveDesktop: desktopResolution.desktop ?? null,
+    createDesktop: resolved.createDesktop,
+    activateDesktop: resolved.activateDesktop,
+    createdDesktop: desktopResolution.createdDesktop,
+    desktopMode: desktopResolution.desktopMode,
+    desktopActivationMode,
+    slot: options.slot.letter,
+    slotName: options.slot.name,
+    target,
+    success: layoutResult.success,
+    error: layoutResult.error,
+    logPath: layoutResult.logPath,
+  });
+
+  return {
+    success: layoutResult.success,
+    message: summaryParts
+      .concat(`Applied layout slot ${options.slot.letter}`)
+      .join(". "),
+    requestedFolderPath: resolved.folderPath,
+    requestedWindowName: resolved.windowName ?? null,
+    requestedDesktop,
+    effectiveDesktop:
+      desktopResolution.desktop ?? matchedWindow.desktop ?? null,
+    createDesktop: resolved.createDesktop,
+    activateDesktop: resolved.activateDesktop,
+    createdDesktop: desktopResolution.createdDesktop,
+    desktopMode: desktopResolution.desktopMode,
+    desktopActivationMode,
+    derivedDesktopBaseName: desktopResolution.derivedDesktopBaseName ?? null,
+    spawnTargetLabel: resolved.label,
+    slot: { id: options.slot.id, letter: options.slot.letter, name: options.slot.name },
+    titleHints,
+    baselineHandles: baselineWindows.map(formatWindowSummary),
+    candidateHandles: selection.newCandidates.map(formatWindowSummary),
+    finalHandles: finalWindows.map(formatWindowSummary),
+    matchedWindow,
+    selectionReason: selection.reason,
+    moveResult: moveResult ?? null,
+    logPath: layoutResult.logPath,
+    exitCode: layoutResult.exitCode ?? null,
+    error: layoutResult.error,
+  };
+}
+
 export async function callTool(
   toolName: string,
   args: Record<string, unknown>
@@ -657,62 +1054,13 @@ export async function callTool(
       if ("error" in resolved) {
         return textResult(resolved.error, true);
       }
-      const desktopResolution = await prepareSpawnDesktop(resolved);
-      if (!desktopResolution.success) {
-        return textResult(
-          JSON.stringify(
-            {
-              success: false,
-              stage: "resolve_desktop",
-              requestedFolderPath: resolved.folderPath,
-              requestedWindowName: resolved.windowName ?? null,
-              requestedDesktop:
-                resolveRequestedDesktopName(resolved) ?? null,
-              createDesktop: resolved.createDesktop,
-              spawnTargetLabel: resolved.label,
-              error: desktopResolution.error,
-            },
-            null,
-            2
-          ),
-          true
-        );
-      }
-
-      logToolEvent("spawn_window desktop resolution", {
-        requestedFolderPath: resolved.folderPath,
-        requestedWindowName: resolved.windowName ?? null,
-        requestedDesktop: resolveRequestedDesktopName(resolved) ?? null,
-        createDesktop: resolved.createDesktop,
-        desktopMode: desktopResolution.desktopMode,
-        effectiveDesktop: desktopResolution.desktop ?? null,
-        createdDesktop: desktopResolution.createdDesktop,
+      const result = await executeSpawnWorkflow(resolved, {
+        requestedTarget:
+          typeof args.target === "string" ? args.target.trim() || null : null,
       });
-
-      const result = await spawnWindow(
-        resolved.folderPath,
-        resolved.windowName,
-        desktopResolution.desktop
-      );
       return textResult(
-        JSON.stringify(
-          {
-            ...result,
-            requestedFolderPath: resolved.folderPath,
-            requestedWindowName: resolved.windowName ?? null,
-            requestedDesktop: resolveRequestedDesktopName(resolved) ?? null,
-            createDesktop: resolved.createDesktop,
-            spawnTargetLabel: resolved.label,
-            desktop: desktopResolution.desktop ?? result.desktop ?? null,
-            desktopMode: desktopResolution.desktopMode,
-            createdDesktop: desktopResolution.createdDesktop,
-            derivedDesktopBaseName:
-              desktopResolution.derivedDesktopBaseName ?? null,
-          },
-          null,
-          2
-        ),
-        !result.success
+        JSON.stringify(result, null, 2),
+        result.success !== true
       );
     }
 
@@ -984,216 +1332,15 @@ export async function callTool(
         return textResult(`Slot "${slotKey}" not found. Available: ${available}`, true);
       }
 
-      const desktopResolution = await prepareSpawnDesktop(resolved);
-      if (!desktopResolution.success) {
-        return textResult(
-          JSON.stringify(
-            {
-              success: false,
-              stage: "resolve_desktop",
-              requestedFolderPath: resolved.folderPath,
-              requestedWindowName: resolved.windowName ?? null,
-              requestedDesktop: resolveRequestedDesktopName(resolved) ?? null,
-              createDesktop: resolved.createDesktop,
-              slot: { id: slot.id, letter: slot.letter, name: slot.name },
-              error: desktopResolution.error,
-            },
-            null,
-            2
-          ),
-          true
-        );
-      }
-
-      if (desktopResolution.desktop) {
-        const desktopResult = await switchToVirtualDesktop(desktopResolution.desktop);
-        logToolEvent("spawn_and_layout desktop switch", {
-          requestedFolderPath: resolved.folderPath,
-          requestedDesktop: resolveRequestedDesktopName(resolved) ?? null,
-          effectiveDesktop: desktopResolution.desktop,
-          createDesktop: resolved.createDesktop,
-          createdDesktop: desktopResolution.createdDesktop,
-          desktopMode: desktopResolution.desktopMode,
-          success: desktopResult.success,
-          error: desktopResult.error,
-        });
-
-        if (!desktopResult.success) {
-          return textResult(
-            JSON.stringify(
-              {
-                success: false,
-                stage: "switch_desktop",
-                requestedFolderPath: resolved.folderPath,
-                requestedWindowName: resolved.windowName ?? null,
-                requestedDesktop: resolveRequestedDesktopName(resolved) ?? null,
-                effectiveDesktop: desktopResolution.desktop,
-                createDesktop: resolved.createDesktop,
-                createdDesktop: desktopResolution.createdDesktop,
-                desktopMode: desktopResolution.desktopMode,
-                slot: { id: slot.id, letter: slot.letter, name: slot.name },
-                error: desktopResult.error,
-              },
-              null,
-              2
-            ),
-            true
-          );
-        }
-      }
-
-      const baselineWindows = await detectWindows();
-      const titleHints = buildSpawnTitleHints({
-        folderPath: resolved.folderPath,
-        windowName: resolved.windowName,
-      });
-
-      logToolEvent("spawn_and_layout baseline", {
-        requestedTarget: typeof args.target === "string" ? args.target : null,
-        requestedFolderPath: resolved.folderPath,
-        requestedWindowName: resolved.windowName ?? null,
-        requestedDesktop: resolveRequestedDesktopName(resolved) ?? null,
-        effectiveDesktop: desktopResolution.desktop ?? null,
-        createDesktop: resolved.createDesktop,
-        createdDesktop: desktopResolution.createdDesktop,
-        desktopMode: desktopResolution.desktopMode,
-        slot: slot.letter,
-        slotName: slot.name,
-        titleHints,
-        baselineHandles: baselineWindows.map(formatWindowSummary),
-      });
-
-      const spawnResult = await spawnWindow(
-        resolved.folderPath,
-        resolved.windowName,
-        desktopResolution.desktop
-      );
-      if (!spawnResult.success) {
-        logToolEvent("spawn_and_layout spawn failed", {
-          requestedFolderPath: resolved.folderPath,
-          requestedDesktop: resolveRequestedDesktopName(resolved) ?? null,
-          effectiveDesktop: desktopResolution.desktop ?? null,
-          createDesktop: resolved.createDesktop,
-          createdDesktop: desktopResolution.createdDesktop,
-          desktopMode: desktopResolution.desktopMode,
-          slot: slot.letter,
-          message: spawnResult.message,
-        });
-        return textResult(
-          JSON.stringify(
-            {
-              success: false,
-              stage: "spawn",
-              requestedFolderPath: resolved.folderPath,
-              requestedWindowName: resolved.windowName ?? null,
-              requestedDesktop: resolveRequestedDesktopName(resolved) ?? null,
-              effectiveDesktop: desktopResolution.desktop ?? null,
-              createDesktop: resolved.createDesktop,
-              createdDesktop: desktopResolution.createdDesktop,
-              desktopMode: desktopResolution.desktopMode,
-              slot: { id: slot.id, letter: slot.letter, name: slot.name },
-              error: spawnResult.message,
-            },
-            null,
-            2
-          ),
-          true
-        );
-      }
-
-      const selection = await waitForSpawnedWindow(baselineWindows, titleHints);
-      logToolEvent("spawn_and_layout window selection", {
-        requestedFolderPath: resolved.folderPath,
-        requestedDesktop: resolveRequestedDesktopName(resolved) ?? null,
-        effectiveDesktop: desktopResolution.desktop ?? null,
-        createDesktop: resolved.createDesktop,
-        createdDesktop: desktopResolution.createdDesktop,
-        desktopMode: desktopResolution.desktopMode,
-        slot: slot.letter,
-        reason: selection.reason,
-        candidateHandles: selection.newCandidates.map(formatWindowSummary),
-        finalHandles: selection.finalWindows.map(formatWindowSummary),
-        matchedWindow: selection.matchedWindow
-          ? formatWindowSummary(selection.matchedWindow)
-          : null,
-      });
-
-      if (!selection.matchedWindow) {
-        return textResult(
-          JSON.stringify(
-            {
-              success: false,
-              stage: "select_window",
-              requestedFolderPath: resolved.folderPath,
-              requestedWindowName: resolved.windowName ?? null,
-              requestedDesktop: resolveRequestedDesktopName(resolved) ?? null,
-              effectiveDesktop: desktopResolution.desktop ?? null,
-              createDesktop: resolved.createDesktop,
-              createdDesktop: desktopResolution.createdDesktop,
-              desktopMode: desktopResolution.desktopMode,
-              slot: { id: slot.id, letter: slot.letter, name: slot.name },
-              titleHints,
-              baselineHandles: baselineWindows.map(formatWindowSummary),
-              candidateHandles: selection.newCandidates.map(formatWindowSummary),
-              finalHandles: selection.finalWindows.map(formatWindowSummary),
-              error: `Unable to isolate a unique spawned VS Code window: ${selection.reason}`,
-            },
-            null,
-            2
-          ),
-          true
-        );
-      }
-
-      const target: LayoutTarget = {
-        windowHandle: selection.matchedWindow.handle,
-        windowTitle: selection.matchedWindow.title,
-      };
-      const layoutResult = await layoutManager.applySlot(slot.id, target);
-
-      logToolEvent("spawn_and_layout layout result", {
-        requestedFolderPath: resolved.folderPath,
-        requestedDesktop: resolveRequestedDesktopName(resolved) ?? null,
-        effectiveDesktop: desktopResolution.desktop ?? null,
-        createDesktop: resolved.createDesktop,
-        createdDesktop: desktopResolution.createdDesktop,
-        desktopMode: desktopResolution.desktopMode,
-        slot: slot.letter,
-        target,
-        success: layoutResult.success,
-        error: layoutResult.error,
-        logPath: layoutResult.logPath,
+      const result = await executeSpawnWorkflow(resolved, {
+        slot,
+        requestedTarget:
+          typeof args.target === "string" ? args.target.trim() || null : null,
       });
 
       return textResult(
-        JSON.stringify(
-          {
-            success: layoutResult.success,
-            requestedFolderPath: resolved.folderPath,
-            requestedWindowName: resolved.windowName ?? null,
-            requestedDesktop: resolveRequestedDesktopName(resolved) ?? null,
-            effectiveDesktop: desktopResolution.desktop ?? null,
-            createDesktop: resolved.createDesktop,
-            createdDesktop: desktopResolution.createdDesktop,
-            desktopMode: desktopResolution.desktopMode,
-            derivedDesktopBaseName:
-              desktopResolution.derivedDesktopBaseName ?? null,
-            spawnTargetLabel: resolved.label,
-            slot: { id: slot.id, letter: slot.letter, name: slot.name },
-            titleHints,
-            baselineHandles: baselineWindows.map(formatWindowSummary),
-            candidateHandles: selection.newCandidates.map(formatWindowSummary),
-            finalHandles: selection.finalWindows.map(formatWindowSummary),
-            matchedWindow: selection.matchedWindow,
-            selectionReason: selection.reason,
-            logPath: layoutResult.logPath,
-            exitCode: layoutResult.exitCode ?? null,
-            error: layoutResult.error,
-          },
-          null,
-          2
-        ),
-        !layoutResult.success
+        JSON.stringify(result, null, 2),
+        result.success !== true
       );
     }
 

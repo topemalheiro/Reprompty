@@ -118,23 +118,23 @@ Spawn a new VS Code window using a saved target alias or a raw project folder.
 
 ```typescript
 type SpawnWindowParams =
-  | { target: string; windowName?: string; desktop?: string; createDesktop?: boolean }
-  | { folderPath: string; windowName?: string; desktop?: string; createDesktop?: boolean };
+  | { target: string; windowName?: string; desktop?: string; createDesktop?: boolean; activateDesktop?: boolean }
+  | { folderPath: string; windowName?: string; desktop?: string; createDesktop?: boolean; activateDesktop?: boolean };
 ```
 
-If `desktop` is supplied and missing, Reprompty creates it, switches there, and then spawns. If `createDesktop: true` is supplied without an explicit `desktop`, Reprompty creates a fresh desktop named from the saved target label first, otherwise the folder basename.
+If `desktop` is supplied and missing, Reprompty creates it and targets that desktop for the spawn. If `createDesktop: true` is supplied without an explicit `desktop`, Reprompty creates a fresh desktop named from the saved target label first, otherwise the folder basename. Desktop-aware spawns stay on the current desktop by default and only switch when `activateDesktop: true` is supplied.
 
 ### spawn_and_layout
 Spawn a VS Code window and apply a layout slot in one call.
 
 ```typescript
 type SpawnAndLayoutParams =
-  | { target: string; slot: string; desktop?: string; createDesktop?: boolean }
-  | { folderPath: string; slot: string; desktop?: string; createDesktop?: boolean };
+  | { target: string; slot: string; desktop?: string; createDesktop?: boolean; activateDesktop?: boolean }
+  | { folderPath: string; slot: string; desktop?: string; createDesktop?: boolean; activateDesktop?: boolean };
 ```
 
 Reprompty now isolates the spawned window by new handle first and only falls back to a unique title match. If it cannot identify one safe target, the tool fails instead of moving the wrong editor window.
-Desktop-aware spawns switch first, then spawn, then apply layout so the new editor window does not briefly appear on the current desktop.
+Desktop-aware spawns stay on the current desktop by default: Reprompty spawns, isolates the new handle, moves it to the target desktop, and then applies layout by handle. Pass `activateDesktop: true` only when you explicitly want the old switch-first behavior.
 
 ### apply_layout
 Apply a saved layout slot to an existing VS Code window.
@@ -225,7 +225,46 @@ Built-in layout calls automatically pass `-WindowHandle` and `-LogPath` to compa
 - Desktop names are the public contract for MCP and UI, not numeric indices
 - Desktop names refresh from backend polling, so the Windows tab updates after rename
 - `ensure_virtual_desktop` is intentionally non-disruptive and does not switch desktops
-- Spawn flows are the place where Reprompty automatically switches desktops
+- Spawn flows stay on the current desktop by default and only switch when `activateDesktop: true` is requested
+
+## Aperant /auto-claude-mcp Handoffs
+
+- Use this section only when the user wants to use Aperant or explicitly says to use the `/auto-claude-mcp` skill
+- When that happens, compose the message so the first line is `/auto-claude-mcp`
+- Paste the tool-call chain directly into that prompt for the master agent
+- Match the chain to the user's wording:
+  - if they say to fully arm Aperant, include the full chain
+  - if they say only certain parts or exclude certain parts, remove the unrelated tool calls
+- Keep the tool calls in this order when included:
+  1. `open_project`
+  2. `associate_project_desktop`
+  3. `assign_window`
+  4. `set_auto_resume_after_rate_limit`
+  5. `set_rdr_enabled`
+
+### Fully Arm Aperant Project Tool Call Chain
+
+```text
+/auto-claude-mcp
+
+Fully arm the Aperant project with the following tool calls in order:
+- open_project
+- associate_project_desktop
+- assign_window
+- set_auto_resume_after_rate_limit
+- set_rdr_enabled
+```
+
+### Partial Chain Rule
+
+```text
+If the user says "only", "except", "don't", or otherwise narrows scope, include only the relevant calls from:
+- open_project
+- associate_project_desktop
+- assign_window
+- set_auto_resume_after_rate_limit
+- set_rdr_enabled
+```
 
 ## Background Messaging (No Foreground Focus)
 
@@ -269,6 +308,9 @@ await rename_virtual_desktop({ currentName: "3", newName: "Focus" });
 
 // Spawn a window via target alias on an existing or auto-created desktop
 await spawn_window({ target: "windows-project", desktop: "2" });
+
+// Opt into the old switch-first desktop behavior
+await spawn_window({ target: "windows-project", desktop: "2", activateDesktop: true });
 
 // Or create a fresh project desktop during spawn
 await spawn_and_layout({ target: "windows-project", slot: "B", createDesktop: true });

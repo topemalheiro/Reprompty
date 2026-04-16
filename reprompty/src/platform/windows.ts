@@ -8,7 +8,6 @@ import {
 } from "../core/cdp-client.js";
 import {
   getWindowDesktopAssignments,
-  switchToVirtualDesktop,
 } from "../core/virtual-desktop-manager.js";
 
 export interface WindowInfo {
@@ -114,23 +113,10 @@ export function resolveDetectedWindowProcessName(
 export function spawnWindow(
   folderPath: string,
   _windowName?: string,
-  desktop?: string
+  _desktop?: string
 ): Promise<{ success: boolean; pid?: number; message: string; desktop?: string }> {
   return (async () => {
     try {
-      const resolvedDesktop = desktop?.trim() || undefined;
-      if (resolvedDesktop) {
-        const switchResult = await switchToVirtualDesktop(resolvedDesktop);
-        if (!switchResult.success) {
-          return {
-            success: false,
-            message:
-              switchResult.error ||
-              `Failed to switch to virtual desktop "${resolvedDesktop}"`,
-          };
-        }
-      }
-
       const codePath = nodePath.join(
         process.env.LOCALAPPDATA || "",
         "Programs",
@@ -150,8 +136,7 @@ export function spawnWindow(
 
       return {
         success: true,
-        message: `Spawned VS Code window for ${folderPath}${resolvedDesktop ? ` on desktop ${resolvedDesktop}` : ""}${result ? ` (${result})` : ""}`,
-        desktop: resolvedDesktop,
+        message: `Spawned VS Code window for ${folderPath}${result ? ` (${result})` : ""}`,
       };
     } catch (error: any) {
       const stderr = error.stderr ? String(error.stderr).trim() : "";
@@ -159,7 +144,6 @@ export function spawnWindow(
       return {
         success: false,
         message: `Failed to spawn window: ${msg}`,
-        desktop: desktop?.trim() || undefined,
       };
     }
   })();

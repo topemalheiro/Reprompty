@@ -24,12 +24,14 @@ export type SpawnWindowParams =
       windowName?: string;
       desktop?: string;
       createDesktop?: boolean;
+      activateDesktop?: boolean;
     }
   | {
       folderPath: string;
       windowName?: string;
       desktop?: string;
       createDesktop?: boolean;
+      activateDesktop?: boolean;
     };
 
 export type SpawnAndLayoutParams =
@@ -39,6 +41,7 @@ export type SpawnAndLayoutParams =
       windowName?: string;
       desktop?: string;
       createDesktop?: boolean;
+      activateDesktop?: boolean;
     }
   | {
       folderPath: string;
@@ -46,6 +49,7 @@ export type SpawnAndLayoutParams =
       windowName?: string;
       desktop?: string;
       createDesktop?: boolean;
+      activateDesktop?: boolean;
     };
 
 export interface ApplyLayoutParams {
@@ -215,6 +219,7 @@ Example usage:
 1. List targets + spawn a window using an alias:
    await reprompty.list_spawn_targets();
    await reprompty.spawn_window({ target: "windows-project", desktop: "2" });
+   await reprompty.spawn_window({ target: "windows-project", desktop: "2", activateDesktop: true });
 
 2. Create or rename desktops:
    await reprompty.ensure_virtual_desktop({ name: "Aperant-MCP" });
