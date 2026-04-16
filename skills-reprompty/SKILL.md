@@ -232,6 +232,9 @@ Built-in layout calls automatically pass `-WindowHandle` and `-LogPath` to compa
 - Use this section only when the user wants to use Aperant or explicitly says to use the `/auto-claude-mcp` skill
 - When that happens, compose the message so the first line is `/auto-claude-mcp`
 - Paste the tool-call chain directly into that prompt for the master agent
+- Tell the agent to first check whether the relevant project tab is already open in Aperant
+- If the project tab already exists, reuse it, skip `open_project`, and do not create a duplicate project tab
+- Do not tell the agent to launch or relaunch Aperant as part of this handoff unless the user explicitly asked for a start/restart
 - Match the chain to the user's wording:
   - if they say to fully arm Aperant, include the full chain
   - if they say only certain parts or exclude certain parts, remove the unrelated tool calls
@@ -247,7 +250,9 @@ Built-in layout calls automatically pass `-WindowHandle` and `-LogPath` to compa
 ```text
 /auto-claude-mcp
 
-Fully arm the Aperant project with the following tool calls in order:
+First check whether the relevant project tab is already open in Aperant. If it is already open, reuse it and skip `open_project`. Do not relaunch Aperant unless the user explicitly asked for that.
+
+Then fully arm the Aperant project with the following tool calls in order:
 - open_project
 - associate_project_desktop
 - assign_window
