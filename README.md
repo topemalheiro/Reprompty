@@ -8,7 +8,7 @@ A framework for orchestrating multiple AI agent windows and prompt engineering w
 
 Reprompty enables you to:
 
-- Spawn multiple VS Code windows with isolated chat sessions
+- Spawn multiple VS Code windows with isolated chat sessions, and [Aperant-MCP](https://github.com/topemalheiro/Aperant-MCP) i.e.
 - Create prompt templates with XML tags for structured prompting
 - Automate batch task execution across multiple windows
 - Trigger skills and workflows based on conditions
