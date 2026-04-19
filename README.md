@@ -1,6 +1,6 @@
 # Reprompty
 
-Reprompty is an MCP Swiss Army knife for AI agent window tooling on Windows 11. It helps you manage both the visual and technical layout of desktops, editor windows, agent workflows, prompt engineering, and cross-editor orchestration.
+Reprompty is an MCP Swiss Army knife for AI agent windows, tooling, desktop layouts, and cross-editor orchestration on Windows 11. It helps you manage both the visual and technical side of agent workflows, prompt engineering, and lower-friction MCP handoffs.
 
 ## Overview
 
