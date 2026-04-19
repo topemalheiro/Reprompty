@@ -1,6 +1,6 @@
 # Reprompty
 
-A framework for orchestrating multiple AI agent windows and prompt engineering workflows on Windows 11.
+Reprompty is an MCP Swiss Army knife for AI agent windows, tooling, desktop layouts, and cross-editor orchestration on Windows 11. It helps you manage both the visual and technical side of agent workflows, prompt engineering, and lower-friction MCP handoffs.
 
 <img width="882" height="690" alt="Screenshot 2026-04-19 185635" src="https://github.com/user-attachments/assets/c10b5f99-d875-4d8f-b377-9c2fc1ddb7c5" />
 
@@ -8,12 +8,16 @@ A framework for orchestrating multiple AI agent windows and prompt engineering w
 
 Reprompty enables you to:
 
-- Spawn multiple VS Code windows with isolated chat sessions, and [Aperant-MCP](https://github.com/topemalheiro/Aperant-MCP) i.e.
+- Shape the actual computer workflow, not just the prompt
+- Spawn multiple VS Code windows with isolated chat sessions
+- Organize windows, desktops, and layouts around the way you want to work
+- Work cleanly alongside projects like [Aperant-MCP](https://github.com/topemalheiro/Aperant-MCP) without adding handoff friction
 - Create prompt templates with XML tags for structured prompting
 - Automate batch task execution across multiple windows
 - Trigger skills and workflows based on conditions
 - Build agent teams that collaborate on complex tasks
-- Link LLMs to pass information or to sync to prepare for a merge for example.
+- Reduce friction when handing work off into Aperant and other MCP-driven flows
+- Link LLMs to pass information or sync context to prepare for a merge, for example
 
 ## Features
 
@@ -21,7 +25,7 @@ Reprompty enables you to:
 
 - Spawn duplicate VS Code windows pointing to the same directory
 - Each window maintains independent chat history
-- Organize windows automatically using scripts
+- Organize windows, desktops, and layouts automatically using scripts and MCP tools
 
 ### Prompt Engineering
 
@@ -34,6 +38,7 @@ Reprompty enables you to:
 - Trigger skills based on events
 - Batch task creation and management
 - Workflow orchestration for multi-agent teams
+- Lower-friction handoffs into Aperant-style MCP workflows
 
 ### Agent Teams
 
@@ -57,11 +62,12 @@ npm start
 
 ## Architecture
 
-Reprompty is designed as a modular framework that can:
+Reprompty is designed as a modular MCP toolkit that can:
 
 - Run as a VS Code extension
 - Integrate with existing tools like Kilo Code
 - Spawn and manage native Windows processes
+- Improve day-to-day UX at the computer-workflow level, not just inside one chat pane
 
 <img width="884" height="691" alt="Screenshot 2026-04-19 185119" src="https://github.com/user-attachments/assets/7a2ba45c-1446-49bc-9f83-15281b712a68" />
 
