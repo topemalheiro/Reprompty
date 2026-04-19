@@ -2,7 +2,7 @@
 
 A framework for orchestrating multiple AI agent windows and prompt engineering workflows on Windows 11.
 
-<img width="888" height="690" alt="image" src="https://github.com/user-attachments/assets/b116639d-5c9d-439e-bd87-7635b5868a03" />
+<img width="883" height="690" alt="Screenshot 2026-04-19 184915" src="https://github.com/user-attachments/assets/04783edf-18d3-4465-8c9b-f27ff8092668" />
 
 ## Overview
 
@@ -63,9 +63,9 @@ Reprompty is designed as a modular framework that can:
 - Integrate with existing tools like Kilo Code
 - Spawn and manage native Windows processes
 
-<img width="892" height="699" alt="image" src="https://github.com/user-attachments/assets/dc097d2c-e12f-4900-97c2-9ad3d6198674" />
+<img width="884" height="691" alt="Screenshot 2026-04-19 185119" src="https://github.com/user-attachments/assets/7a2ba45c-1446-49bc-9f83-15281b712a68" />
 
-<img width="887" height="691" alt="image" src="https://github.com/user-attachments/assets/d654d5d8-f5a6-4e87-a09e-bf40e23ec75c" />
+<img width="887" height="696" alt="Screenshot 2026-04-19 184955" src="https://github.com/user-attachments/assets/f3700d5e-5253-4d8e-9ddb-b98f030b2453" />
 
 ## License
 
