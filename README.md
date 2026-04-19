@@ -1,17 +1,20 @@
 # Reprompty
 
-A framework for orchestrating multiple AI agent windows and prompt engineering workflows on Windows 11.
+Reprompty is an MCP Swiss Army knife for AI agent window tooling on Windows 11. It helps you manage both the visual and technical layout of desktops, editor windows, agent workflows, prompt engineering, and cross-editor orchestration.
 
 ## Overview
 
 Reprompty enables you to:
 
+- Shape the actual computer workflow, not just the prompt
 - Spawn multiple VS Code windows with isolated chat sessions
+- Organize windows, desktops, and layouts around the way you want to work
 - Create prompt templates with XML tags for structured prompting
 - Automate batch task execution across multiple windows
 - Trigger skills and workflows based on conditions
 - Build agent teams that collaborate on complex tasks
-- Link LLMs to pass information or to sync to prepare for a merge for example.
+- Reduce friction when handing work off into Aperant and other MCP-driven flows
+- Link LLMs to pass information or sync context to prepare for a merge, for example
 
 ## Features
 
@@ -19,7 +22,7 @@ Reprompty enables you to:
 
 - Spawn duplicate VS Code windows pointing to the same directory
 - Each window maintains independent chat history
-- Organize windows automatically using scripts
+- Organize windows, desktops, and layouts automatically using scripts and MCP tools
 
 ### Prompt Engineering
 
@@ -32,6 +35,7 @@ Reprompty enables you to:
 - Trigger skills based on events
 - Batch task creation and management
 - Workflow orchestration for multi-agent teams
+- Lower-friction handoffs into Aperant-style MCP workflows
 
 ### Agent Teams
 
@@ -195,11 +199,12 @@ mcp__reprompty__apply_layout { "slot": "B", "windowHandle": 123456 }
 
 ## Architecture
 
-Reprompty is designed as a modular framework that can:
+Reprompty is designed as a modular MCP toolkit that can:
 
 - Run as a VS Code extension
 - Integrate with existing tools like Kilo Code
 - Spawn and manage native Windows processes
+- Improve day-to-day UX at the computer-workflow level, not just inside one chat pane
 
 ## License
 
