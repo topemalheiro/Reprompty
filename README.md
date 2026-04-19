@@ -2,7 +2,7 @@
 
 A framework for orchestrating multiple AI agent windows and prompt engineering workflows on Windows 11.
 
-<img width="883" height="690" alt="Screenshot 2026-04-19 184915" src="https://github.com/user-attachments/assets/04783edf-18d3-4465-8c9b-f27ff8092668" />
+<img width="966" height="690" alt="image" src="https://github.com/user-attachments/assets/26680d2e-ed30-4ef1-8037-a6a91a7a8693" />
 
 ## Overview
 
