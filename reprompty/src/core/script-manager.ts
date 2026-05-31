@@ -153,6 +153,8 @@ function layoutScriptDefaults(scriptName: string, filePath: string): ScriptMcpAc
     return [];
   }
 
+  const isLinuxPython = process.platform !== "win32" && filePath.toLowerCase().endsWith(".py");
+
   return [
     {
       id: "dual-monitor-layout-bottom",
@@ -160,7 +162,7 @@ function layoutScriptDefaults(scriptName: string, filePath: string): ScriptMcpAc
       toolName: "dual_monitor_layout_bottom",
       label: "Dual monitor layout (bottom)",
       description: "Run the Ctrl+Alt+V dual monitor bottom layout",
-      args: ["-Once"],
+      args: isLinuxPython ? ["--once", "--dual"] : ["-Once"],
     },
     {
       id: "top-monitors-layout-panel-full",
@@ -168,7 +170,7 @@ function layoutScriptDefaults(scriptName: string, filePath: string): ScriptMcpAc
       toolName: "top_monitors_layout_panel_full",
       label: "Top monitors layout (panel full)",
       description: "Run the Ctrl+Alt+N top monitors panel-full layout",
-      args: ["-SingleOnce"],
+      args: isLinuxPython ? ["--once", "--single"] : ["-SingleOnce"],
     },
   ];
 }
