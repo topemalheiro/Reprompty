@@ -60,7 +60,7 @@ param([switch]$Once, [switch]$SingleOnce)
 
 describe("spawn target helpers", () => {
   it("normalizes target aliases for MCP-friendly target names", () => {
-    expect(normalizeSpawnTargetId("Windows Project")).toBe("windows-project");
+    expect(normalizeSpawnTargetId("OS Toolkit")).toBe("windows-project");
     expect(normalizeSpawnTargetId("  Repo / AI Window  ")).toBe("repo-ai-window");
   });
 
@@ -76,8 +76,8 @@ describe("spawn target helpers", () => {
 
     const manager = new SpawnTargetManager(dir);
     manager.addTarget({
-      label: "Windows Project",
-      folderPath: "C:\\Users\\topem\\Desktop\\Windows Project",
+      label: "OS Toolkit",
+      folderPath: "C:\\Users\\topem\\Desktop\\OS Toolkit",
       desktop: "2",
     });
 

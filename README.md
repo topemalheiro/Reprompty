@@ -82,8 +82,8 @@ Reprompty can save common folders as **spawn targets** so MCP clients can open V
 1. Open Reprompty -> **Spawn** tab.
 2. Under **Saved Spawn Targets**, fill:
    - Alias (example: `windows-project`)
-   - Label (example: `Windows Project`)
-   - Folder Path (example: `C:\Users\topem\Desktop\Windows Project`)
+   - Label (example: `OS Toolkit`)
+   - Folder Path (example: `C:\Users\topem\Desktop\OS Toolkit`)
    - Optional window name
    - Optional default desktop name
 3. Click **Save Target**.

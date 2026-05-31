@@ -28,9 +28,10 @@ import {
 import {
   spawnWindow,
   detectWindows,
+  detectAllWindows,
   getCdpPort,
   type DetectedWindow,
-} from "../platform/windows.js";
+} from "../platform/index.js";
 import { sendViaAgentCdp, isCdpAvailable } from "../core/cdp-client.js";
 import {
   buildSpawnTitleHints,
@@ -326,7 +327,15 @@ const BUILT_IN_TOOLS: MCPTool[] = [
   },
   {
     name: "detect_windows",
-    description: "Auto-detect all VS Code and Kilo Code windows with their PIDs and capabilities",
+    description: "Auto-detect all VS Code: and Kilo Code: windows with their PIDs and capabilities",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+  },
+  {
+    name: "detect_all_windows",
+    description: "Detect ALL visible windows on the desktop (browsers, terminals, editors, etc.)",
     inputSchema: {
       type: "object",
       properties: {},
@@ -334,7 +343,7 @@ const BUILT_IN_TOOLS: MCPTool[] = [
   },
   {
     name: "check_cdp",
-    description: "Check if Chrome DevTools Protocol is available for Claude Code background sending",
+    description: "Check if Chrome DevTools Protocol is available for background sending",
     inputSchema: {
       type: "object",
       properties: {},
@@ -1108,26 +1117,22 @@ export async function callTool(
 
       const cfg = connection.config as VSCodeWindowConfig;
 
+      // Try IPC first (fastest for Kilo Code:)
       if (cfg.method === "background" && cfg.socketPath) {
         try {
           const client = getOrCreateIpcClient(cfg.socketPath);
           const ready = await client.waitForReady();
-          if (!ready) {
-            connectionManager.updateConnectionStatus(connection.id, "error");
-            return textResult(
-              `Error: IPC not ready for ${connection.name} (timeout)`,
-              true
-            );
+          if (ready) {
+            client.sendTaskMessage(prompt);
+            connectionManager.updateConnectionStatus(connection.id, "active");
+            return textResult(`Sent to ${connection.name} via background IPC`);
           }
-          client.sendTaskMessage(prompt);
-          connectionManager.updateConnectionStatus(connection.id, "active");
-          return textResult(`Sent to ${connection.name} via background IPC`);
         } catch (err) {
-          connectionManager.updateConnectionStatus(connection.id, "error");
-          return textResult(`Error sending to ${connection.name}: ${err}`, true);
+          console.warn(`[send_prompt] IPC failed for ${connection.name}, falling back to CDP:`, err);
         }
       }
 
+      // Fall back to CDP for Kilo Code:, Codex, and Claude Code:
       if (
         cfg.extension === "claude-code" ||
         cfg.extension === "codex" ||
@@ -1143,7 +1148,15 @@ export async function callTool(
             connectionManager.updateConnectionStatus(connection.id, "active");
             return textResult(`Sent to ${connection.name} via ${cfg.extension} CDP (background)`);
           }
+          return textResult(
+            `CDP send failed for ${connection.name}: ${result.error || "unknown error"}`,
+            true
+          );
         }
+        return textResult(
+          `CDP port not available for ${connection.name}. Ensure VS Code: is started with --remote-debugging-port=9222`,
+          true
+        );
       }
 
       return textResult(
@@ -1194,19 +1207,29 @@ export async function callTool(
 
         const cfg = connection.config as VSCodeWindowConfig;
         try {
+          let sent = false;
+
+          // Try IPC first
           if (cfg.method === "background" && cfg.socketPath) {
-            const client = getOrCreateIpcClient(cfg.socketPath);
-            const ready = await client.waitForReady();
-            if (!ready) {
-              throw new Error("IPC not ready");
+            try {
+              const client = getOrCreateIpcClient(cfg.socketPath);
+              const ready = await client.waitForReady();
+              if (ready) {
+                client.sendTaskMessage(promptTask.prompt);
+                results.push(`Sent to ${connection.name} (background IPC)`);
+                sent = true;
+              }
+            } catch (ipcErr) {
+              console.warn(`[daisy_chain] IPC failed for ${connection.name}, trying CDP:`, ipcErr);
             }
-            client.sendTaskMessage(promptTask.prompt);
-            results.push(`Sent to ${connection.name} (background)`);
-          } else if (
+          }
+
+          // Fall back to CDP
+          if (!sent && (
             cfg.extension === "claude-code" ||
             cfg.extension === "codex" ||
             cfg.extension === "kilo-code"
-          ) {
+          )) {
             const port = getCdpPort();
             if (!port) {
               throw new Error("CDP port not available");
@@ -1219,7 +1242,10 @@ export async function callTool(
               throw new Error(cdpResult.error || "CDP failed");
             }
             results.push(`Sent to ${connection.name} (${cfg.extension} CDP)`);
-          } else {
+            sent = true;
+          }
+
+          if (!sent) {
             throw new Error("No background method available");
           }
         } catch (err) {
@@ -1348,6 +1374,10 @@ export async function callTool(
       return textResult(JSON.stringify(await detectWindows(), null, 2));
     }
 
+    case "detect_all_windows": {
+      return textResult(JSON.stringify(await detectAllWindows(), null, 2));
+    }
+
     case "check_cdp": {
       const port = getCdpPort();
       if (!port) {
@@ -1366,10 +1396,10 @@ export async function callTool(
           {
             available,
             port,
-            claudeCodeWebview: available,
+            agentWebview: available,
             reason: available
-              ? "Claude Code webview found"
-              : "Claude Code webview not found among CDP targets",
+              ? "Agent webview found via CDP"
+              : "No agent webview found among CDP targets",
           },
           null,
           2

@@ -18,9 +18,14 @@ Thumbs.db
 
 # Cloned repos
 openclaw/
+VSCodeSidePanelLayout/
 
 # Aperant-MCP data directory
 .auto-claude/
+
+# Reprompty generated directories
+.kilo/
+plans/
 
 # Aperant-MCP generated files
 .auto-claude-security.json

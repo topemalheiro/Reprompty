@@ -37,37 +37,96 @@ export interface LayoutApplyResult {
   windowHandle?: number;
 }
 
-const DEFAULT_SCRIPT_PATH =
-  "C:\\Users\\topem\\scripts\\VSCodeSidePanelLayout\\VSCodeSidePanelLayout.ps1";
+const IS_WINDOWS = process.platform === "win32";
+
+function getDefaultScriptPath(): string {
+  if (IS_WINDOWS) {
+    return "C:\\Users\\topem\\scripts\\VSCodeSidePanelLayout\\VSCodeSidePanelLayout.ps1";
+  }
+  // Linux: use the Python layout script inside the repo
+  // Try multiple strategies to find the repo root regardless of cwd
+  const candidates = [
+    // Derive from __dirname (dist/core/ -> repo root)
+    path.join(__dirname, "..", "..", "VSCodeSidePanelLayout", "linux_layout.py"),
+    // When running from reprompty/ subdirectory
+    path.join(__dirname, "..", "..", "..", "VSCodeSidePanelLayout", "linux_layout.py"),
+    // Absolute fallback for this specific machine
+    "/home/tope/Projects/OS Toolkit/Reprompty/VSCodeSidePanelLayout/linux_layout.py",
+  ];
+  for (const candidate of candidates) {
+    try {
+      if (fs.existsSync(candidate)) {
+        return candidate;
+      }
+    } catch {
+      // Continue to next candidate
+    }
+  }
+  // Last resort: return the most likely path even if it doesn't exist yet
+  return candidates[0];
+}
+
 const LAYOUT_LOG_DIR_NAME = "VSCodeSidePanelLayout";
 const LAYOUT_RUN_TIMEOUT_MS = 60000;
 
-const DEFAULT_SLOTS: Omit<LayoutSlot, "id">[] = [
-  {
-    letter: "A",
-    name: "Dual Bottom",
-    scriptArgs: ["-Once"],
-    hotkey: "Ctrl+Alt+V",
-    windowX: 0,
-    windowY: 1083,
-    windowWidth: 3840,
-    windowHeight: 953,
-    panelWidth: 1920,
-    monitorHint: "DISPLAY5+DISPLAY6 bottom dual monitors",
-  },
-  {
-    letter: "B",
-    name: "Top Full Panel",
-    scriptArgs: ["-SingleOnce"],
-    hotkey: "Ctrl+Alt+N",
-    windowX: -1360,
-    windowY: 449,
-    windowWidth: 3280,
-    windowHeight: 583,
-    panelWidth: 1920,
-    monitorHint: "DISPLAY2+DISPLAY1 top monitors",
-  },
-];
+function getDefaultSlots(): Omit<LayoutSlot, "id">[] {
+  if (IS_WINDOWS) {
+    return [
+      {
+        letter: "A",
+        name: "Dual Bottom",
+        scriptArgs: ["-Once"],
+        hotkey: "Ctrl+Alt+V",
+        windowX: 0,
+        windowY: 1083,
+        windowWidth: 3840,
+        windowHeight: 953,
+        panelWidth: 1920,
+        monitorHint: "DISPLAY5+DISPLAY6 bottom dual monitors",
+      },
+      {
+        letter: "B",
+        name: "Top Full Panel",
+        scriptArgs: ["-SingleOnce"],
+        hotkey: "Ctrl+Alt+N",
+        windowX: -1360,
+        windowY: 449,
+        windowWidth: 3280,
+        windowHeight: 583,
+        panelWidth: 1920,
+        monitorHint: "DISPLAY2+DISPLAY1 top monitors",
+      },
+    ];
+  }
+  // Linux defaults – dynamically detected by linux_layout.py via kscreen-doctor.
+  // These static values are for UI display; the script computes actual geometry at runtime.
+  return [
+    {
+      letter: "A",
+      name: "Dual Bottom",
+      scriptArgs: ["--once", "--dual"],
+      hotkey: "Ctrl+Alt+V",
+      windowX: 1360,
+      windowY: 1002,
+      windowWidth: 3840,
+      windowHeight: 1080,
+      panelWidth: 1920,
+      monitorHint: "HDMI-A-1 + DP-1 bottom dual monitors",
+    },
+    {
+      letter: "B",
+      name: "Top Full Panel",
+      scriptArgs: ["--once", "--single"],
+      hotkey: "Ctrl+Alt+N",
+      windowX: 1360,
+      windowY: 0,
+      windowWidth: 1920,
+      windowHeight: 1080,
+      panelWidth: 960,
+      monitorHint: "HDMI-A-4 top monitor",
+    },
+  ];
+}
 
 export function buildLayoutRunLogPath(
   baseDir: string,
@@ -107,7 +166,7 @@ export class LayoutManager {
     const homeDir = process.env.USERPROFILE || process.env.HOME || ".";
     this.configDir = path.join(homeDir, ".reprompty");
     this.configPath = path.join(this.configDir, "layouts.json");
-    this.config = { version: 1, scriptPath: DEFAULT_SCRIPT_PATH, slots: [] };
+    this.config = { version: 1, scriptPath: getDefaultScriptPath(), slots: [] };
     this.loadConfig();
   }
 
@@ -132,8 +191,8 @@ export class LayoutManager {
   private seedDefaults(): void {
     this.config = {
       version: 1,
-      scriptPath: DEFAULT_SCRIPT_PATH,
-      slots: DEFAULT_SLOTS.map((slot) => ({
+      scriptPath: getDefaultScriptPath(),
+      slots: getDefaultSlots().map((slot) => ({
         ...slot,
         id: crypto.randomUUID(),
       })),
@@ -266,17 +325,21 @@ export class LayoutManager {
         Number.isFinite(target.windowHandle) &&
         target.windowHandle > 0
       ) {
-        fullArgs.push("-WindowHandle", String(target.windowHandle));
+        fullArgs.push(IS_WINDOWS ? "-WindowHandle" : "--window-handle", String(target.windowHandle));
       } else if (target.windowTitle) {
-        fullArgs.push("-WindowTitle", target.windowTitle);
+        fullArgs.push(IS_WINDOWS ? "-WindowTitle" : "--window-title", target.windowTitle);
       }
 
       const logPath = createLayoutRunLogPath();
-      fullArgs.push("-LogPath", logPath);
+      fullArgs.push(IS_WINDOWS ? "-LogPath" : "--log-path", logPath);
 
-      const proc = spawn(
-        "powershell.exe",
-        [
+      let command: string;
+      let spawnArgs: string[];
+      let spawnOptions: Parameters<typeof spawn>[2];
+
+      if (IS_WINDOWS) {
+        command = "powershell.exe";
+        spawnArgs = [
           "-NoProfile",
           "-ExecutionPolicy",
           "Bypass",
@@ -285,12 +348,21 @@ export class LayoutManager {
           "-File",
           scriptPath,
           ...fullArgs,
-        ],
-        {
+        ];
+        spawnOptions = {
           windowsHide: true,
           stdio: ["ignore", "pipe", "pipe"],
-        }
-      );
+        };
+      } else {
+        const isPython = scriptPath.endsWith(".py");
+        command = isPython ? "python3" : "bash";
+        spawnArgs = [scriptPath, ...fullArgs];
+        spawnOptions = {
+          stdio: ["ignore", "pipe", "pipe"],
+        };
+      }
+
+      const proc = spawn(command, spawnArgs, spawnOptions);
 
       const stdoutLines: string[] = [];
       const stderrLines: string[] = [];

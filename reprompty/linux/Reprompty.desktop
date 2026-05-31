@@ -1,0 +1,20 @@
+[Desktop Entry]
+Name=Reprompty
+Comment=AI agent orchestration framework for multi-window prompt engineering
+Exec=/home/tope/Projects/OS\ Toolkit/Reprompty/reprompty/linux/reprompty-launcher.sh
+Icon=/home/tope/Projects/OS\ Toolkit/Reprompty/reprompty/build-resources/icon.png
+Type=Application
+Categories=Development;Utility;
+Terminal=false
+StartupNotify=true
+StartupWMClass=Reprompty
+
+Actions=LayoutDual;LayoutSingle;
+
+[Desktop Action LayoutDual]
+Name=Dual Monitor Layout
+Exec=python3 "/home/tope/Projects/OS Toolkit/Reprompty/VSCodeSidePanelLayout/linux_layout.py" --once --dual
+
+[Desktop Action LayoutSingle]
+Name=Single Monitor Layout
+Exec=python3 "/home/tope/Projects/OS Toolkit/Reprompty/VSCodeSidePanelLayout/linux_layout.py" --once --single
