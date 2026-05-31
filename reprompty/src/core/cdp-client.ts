@@ -48,6 +48,8 @@ function stripEditorSuffix(title: string): string {
   return title
     .replace(/\s+-\s+Visual Studio Code.*$/i, "")
     .replace(/\s+-\s+Kilo Code.*$/i, "")
+    .replace(/\s+-\s+VSCodium.*$/i, "")
+    .replace(/\s+-\s+Code:\s+-\s+OSS.*$/i, "")
     .trim();
 }
 
@@ -600,14 +602,14 @@ export async function sendViaCdp(
   windowTitle?: string
 ): Promise<{ success: boolean; error?: string }> {
   return sendViaAgentCdp(port, message, {
-    agent: "claude-code",
+    agent: "kilo-code",
     windowTitle,
   });
 }
 
 export async function isCdpAvailable(
   port: number,
-  agent: Exclude<AgentKind, "unknown"> = "claude-code"
+  agent: Exclude<AgentKind, "unknown"> = "kilo-code"
 ): Promise<boolean> {
   try {
     const targets = await getCdpTargets(port);

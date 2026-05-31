@@ -27,5 +27,15 @@
         "arch": ["x64"]
       }
     ]
+  },
+  "linux": {
+    "icon": "build/icon.png",
+    "target": [
+      {
+        "target": "dir",
+        "arch": ["x64"]
+      }
+    ],
+    "category": "Development"
   }
 }

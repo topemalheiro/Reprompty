@@ -4,7 +4,7 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-export type ScriptType = "powershell" | "batch" | "vbs" | "executable";
+export type ScriptType = "powershell" | "pwsh" | "batch" | "vbs" | "executable" | "shell" | "python";
 export type ScriptStatus = "stopped" | "running" | "error" | "starting";
 export type LayoutRole = "primary" | "secondary" | null;
 
@@ -86,14 +86,19 @@ export const RESERVED_MCP_TOOL_NAMES = [
   "list_layout_slots",
   "spawn_and_layout",
   "detect_windows",
+  "detect_all_windows",
   "check_cdp",
 ] as const;
+
+function resolvePowerShellCommand(): string {
+  return process.platform === "win32" ? "powershell.exe" : "pwsh";
+}
 
 function detectScriptType(filePath: string): ScriptType {
   const ext = path.extname(filePath).toLowerCase();
   switch (ext) {
     case ".ps1":
-      return "powershell";
+      return process.platform === "win32" ? "powershell" : "pwsh";
     case ".bat":
     case ".cmd":
       return "batch";
@@ -101,8 +106,12 @@ function detectScriptType(filePath: string): ScriptType {
       return "vbs";
     case ".exe":
       return "executable";
+    case ".sh":
+      return "shell";
+    case ".py":
+      return "python";
     default:
-      return "powershell";
+      return process.platform === "win32" ? "powershell" : "shell";
   }
 }
 
@@ -525,6 +534,20 @@ export class ScriptManager extends EventEmitter {
             ...allArgs,
           ],
         };
+      case "pwsh":
+        return {
+          command: "pwsh",
+          args: [
+            "-ExecutionPolicy",
+            "Bypass",
+            "-NoProfile",
+            "-WindowStyle",
+            "Hidden",
+            "-File",
+            entry.path,
+            ...allArgs,
+          ],
+        };
       case "batch":
         return {
           command: "cmd.exe",
@@ -539,6 +562,16 @@ export class ScriptManager extends EventEmitter {
         return {
           command: entry.path,
           args: allArgs,
+        };
+      case "shell":
+        return {
+          command: "bash",
+          args: [entry.path, ...allArgs],
+        };
+      case "python":
+        return {
+          command: "python3",
+          args: [entry.path, ...allArgs],
         };
     }
   }
@@ -560,10 +593,13 @@ export class ScriptManager extends EventEmitter {
       running.outputLines = [];
       this.emitStatus(id, "starting");
 
-      const proc = spawn(command, args, {
-        windowsHide: true,
+      const spawnOptions: Parameters<typeof spawn>[2] = {
         stdio: ["ignore", "pipe", "pipe"],
-      });
+      };
+      if (process.platform === "win32") {
+        spawnOptions.windowsHide = true;
+      }
+      const proc = spawn(command, args, spawnOptions);
 
       running.process = proc;
       running.pid = proc.pid || null;
@@ -669,10 +705,13 @@ export class ScriptManager extends EventEmitter {
       const stderr: string[] = [];
 
       try {
-        const proc = spawn(command, args, {
-          windowsHide: true,
+        const spawnOptions: Parameters<typeof spawn>[2] = {
           stdio: ["ignore", "pipe", "pipe"],
-        });
+        };
+        if (process.platform === "win32") {
+          spawnOptions.windowsHide = true;
+        }
+        const proc = spawn(command, args, spawnOptions);
 
         proc.stdout?.on("data", (data: Buffer) => {
           const lines = data.toString().split("\n").filter((line) => line.trim());
@@ -773,10 +812,14 @@ export class ScriptManager extends EventEmitter {
       const latest = this.scripts.get(id);
       if (latest && latest.status === "running" && pid) {
         try {
-          execSync(`taskkill /PID ${pid} /T /F`, {
-            windowsHide: true,
-            stdio: "ignore",
-          });
+          if (process.platform === "win32") {
+            execSync(`taskkill /PID ${pid} /T /F`, {
+              windowsHide: true,
+              stdio: "ignore",
+            });
+          } else {
+            execSync(`kill -9 ${pid}`, { stdio: "ignore" });
+          }
           latest.status = "stopped";
           latest.process = null;
           latest.pid = null;

@@ -366,10 +366,17 @@ export function resolveBackgroundRoute(
   if (activeAgent === "kilo-code" && availableAgents.includes("kilo-code")) {
     return "cdp-kilo";
   }
+  if (activeAgent === "codex" && availableAgents.includes("codex")) {
+    return "cdp-codex";
+  }
   if (activeAgent === "claude-code" && availableAgents.includes("claude-code")) {
     return "cdp-claude";
   }
-  if (activeAgent === "codex" && availableAgents.includes("codex")) {
+  // When agent is unknown, prefer Kilo Code: as the "start with" agent
+  if (activeAgent === "unknown" && availableAgents.includes("kilo-code")) {
+    return "cdp-kilo";
+  }
+  if (activeAgent === "unknown" && availableAgents.includes("codex")) {
     return "cdp-codex";
   }
   return "foreground";
@@ -493,7 +500,7 @@ $results | ForEach-Object { Write-Output $_ }
         ? "kilo-code"
         : isKilo
         ? "kilo-code"
-        : "claude-code";
+        : "kilo-code"; // Default "start with" agent per user request
       const backgroundRoute = resolveBackgroundRoute(
         activeAgent,
         availableAgents,
@@ -529,8 +536,124 @@ $results | ForEach-Object { Write-Output $_ }
   }
 }
 
+export interface AllWindowInfo {
+  handle: number;
+  pid: number;
+  title: string;
+  processName: string;
+}
+
 /**
- * Get the CDP (Chrome DevTools Protocol) port from VS Code's DevToolsActivePort file.
+ * Detect ALL visible windows on the desktop (not just editors).
+ */
+export function detectAllWindows(): AllWindowInfo[] {
+  const windows: AllWindowInfo[] = [];
+
+  try {
+    const tempDir = getWritableTempDir();
+    const ps1File = nodePath.join(tempDir, "reprompty-detect-all.ps1");
+    const tempDirEscaped = tempDir.replace(/\\/g, "\\\\").replace(/'/g, "''");
+
+    const script = `
+$env:TEMP = '${tempDirEscaped}'
+$env:TMP = '${tempDirEscaped}'
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+public class WinDetectAll {
+  [DllImport("user32.dll")]
+  public static extern bool EnumWindows(EnumWindowsProc enumProc, IntPtr lParam);
+  public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+  [DllImport("user32.dll")]
+  public static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+  [DllImport("user32.dll")]
+  public static extern int GetWindowTextLength(IntPtr hWnd);
+  [DllImport("user32.dll")]
+  public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+  [DllImport("user32.dll")]
+  public static extern bool IsWindowVisible(IntPtr hWnd);
+}
+"@
+$results = [System.Collections.ArrayList]::new()
+$callback = [WinDetectAll+EnumWindowsProc]{
+  param($hWnd, $lParam)
+  if (-not [WinDetectAll]::IsWindowVisible($hWnd)) { return $true }
+  $length = [WinDetectAll]::GetWindowTextLength($hWnd)
+  if ($length -le 0) { return $true }
+  $sb = New-Object System.Text.StringBuilder($length + 1)
+  [WinDetectAll]::GetWindowText($hWnd, $sb, $sb.Capacity) | Out-Null
+  $title = $sb.ToString()
+  $wpid = [uint32]0
+  [WinDetectAll]::GetWindowThreadProcessId($hWnd, [ref]$wpid) | Out-Null
+  $processName = ""
+  try {
+    $processName = (Get-Process -Id $wpid -ErrorAction Stop).ProcessName
+  } catch {
+    $processName = ""
+  }
+  $global:results.Add("$($hWnd.ToInt64())|$wpid|$processName|$title") | Out-Null
+  return $true
+}
+[void][WinDetectAll]::EnumWindows($callback, [IntPtr]::Zero)
+$results | ForEach-Object { Write-Output $_ }
+`;
+
+    fs.writeFileSync(ps1File, script, "utf-8");
+
+    const raw = execSync(
+      `powershell -NoProfile -ExecutionPolicy Bypass -File "${ps1File}"`,
+      { encoding: "utf-8", timeout: 10000 }
+    ).trim();
+
+    if (!raw) return [];
+
+    const lines = raw.split("\n").map((l) => l.trim()).filter((l) => l && l !== "True" && l.includes("|"));
+
+    for (const line of lines) {
+      const parts = line.split("|");
+      if (parts.length < 4) continue;
+
+      const handle = parseInt(parts[0], 10);
+      const pid = parseInt(parts[1], 10);
+      const processName = parts[2].trim();
+      const title = parts.slice(3).join("|");
+
+      if (!title.trim()) continue;
+
+      windows.push({
+        handle,
+        pid,
+        title,
+        processName: processName || "unknown",
+      });
+    }
+  } catch (err) {
+    console.error("[detectAllWindows] Error:", err);
+  }
+
+  return windows;
+}
+
+function parseArgvJson(portFile: string): number | null {
+  try {
+    if (!fs.existsSync(portFile)) return null;
+    const raw = fs.readFileSync(portFile, "utf-8");
+    const parsed = JSON.parse(raw);
+    const port = parsed["remote-debugging-port"];
+    if (typeof port === "number" || typeof port === "string") {
+      const n = parseInt(String(port), 10);
+      if (!isNaN(n)) return n;
+    }
+  } catch {
+    // Ignore parse errors
+  }
+  return null;
+}
+
+/**
+ * Get the CDP (Chrome DevTools Protocol) port from VS Code:'s DevToolsActivePort file.
+ * Falls back to parsing %APPDATA%\Code:\argv.json for "remote-debugging-port".
  * Returns null if not available.
  */
 export function getCdpPort(): number | null {
@@ -539,11 +662,18 @@ export function getCdpPort(): number | null {
     if (!appData) return null;
 
     const portFile = nodePath.join(appData, "Code", "DevToolsActivePort");
-    if (!fs.existsSync(portFile)) return null;
+    if (fs.existsSync(portFile)) {
+      const content = fs.readFileSync(portFile, "utf-8").trim();
+      const port = parseInt(content.split("\n")[0], 10);
+      if (!isNaN(port)) return port;
+    }
 
-    const content = fs.readFileSync(portFile, "utf-8").trim();
-    const port = parseInt(content.split("\n")[0], 10);
-    return isNaN(port) ? null : port;
+    // Fallback to argv.json
+    const argvFile = nodePath.join(appData, "Code", "argv.json");
+    const port = parseArgvJson(argvFile);
+    if (port !== null) return port;
+
+    return null;
   } catch {
     return null;
   }

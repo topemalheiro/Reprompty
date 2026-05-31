@@ -12,6 +12,7 @@ import { layoutManager } from "../core/layout-manager.js";
 import { listVirtualDesktops } from "../core/virtual-desktop-manager.js";
 import { getOrCreateIpcClient, removeIpcClient } from "../core/ipc-client.js";
 import type { VSCodeWindowConfig } from "../core/connection-manager.js";
+import * as platform from "../platform/index.js";
 
 // CRITICAL EARLY LOG - write directly to stderr to bypass any console override
 let logFile: string;
@@ -259,8 +260,7 @@ electron.app.whenReady().then(() => {
   // Start window auto-detection polling (every 5 seconds)
   setInterval(async () => {
     try {
-      const { detectWindows } = await import("../platform/windows.js");
-      const windows = await detectWindows();
+      const windows = await platform.detectWindows();
       mainWindow?.webContents?.send("windows-detected", windows);
     } catch {
       // Ignore detection errors during polling
@@ -332,8 +332,7 @@ electron.ipcMain.handle("remove-connection", async (_event: any, id: string) => 
 
 electron.ipcMain.handle("detect-windows", async () => {
   try {
-    const { detectWindows } = await import("../platform/windows.js");
-    return await detectWindows();
+    return await platform.detectWindows();
   } catch (err) {
     console.error("[IPC] detect-windows error:", err);
     return [];
@@ -379,8 +378,7 @@ electron.ipcMain.handle("send-to-detected", async (_event: any, args: { window: 
   ) {
     try {
       dbg("Trying CDP...");
-      const { getCdpPort } = await import("../platform/windows.js");
-      const port = getCdpPort();
+      const port = platform.getCdpPort();
       dbg(`CDP port: ${port}`);
       if (port) {
         dbg("Importing cdp-client...");
@@ -495,8 +493,7 @@ electron.ipcMain.handle("daisy-chain", async (_event: any, args: { prompts: Arra
           if (!ready) throw new Error("IPC client not ready");
           client.sendTaskMessage(item.prompt);
         } else if (cfg.windowHandle) {
-          const { sendMessageForeground } = await import("../platform/windows.js");
-          await sendMessageForeground(cfg.windowHandle, item.prompt);
+          await platform.sendMessageForeground(cfg.windowHandle, item.prompt);
         } else {
           throw new Error("No socketPath or windowHandle");
         }
@@ -564,7 +561,7 @@ electron.ipcMain.handle("scripts-pick-file", async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     properties: ["openFile"],
     filters: [
-      { name: "Scripts", extensions: ["ps1", "bat", "cmd", "vbs", "exe"] },
+      { name: "Scripts", extensions: process.platform === "win32" ? ["ps1", "bat", "cmd", "vbs", "exe"] : ["sh", "py", "bash", "zsh", "ps1"] },
       { name: "All Files", extensions: ["*"] },
     ],
   });

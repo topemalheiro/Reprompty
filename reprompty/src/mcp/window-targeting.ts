@@ -1,4 +1,4 @@
-import type { DetectedWindow } from "../platform/windows.js";
+import type { DetectedWindow } from "../platform/index.js";
 
 export interface WindowSelectionResult {
   match: DetectedWindow | null;
