@@ -34,3 +34,6 @@ plans/
 .worktrees/
 .security-key
 logs/security/
+
+# Built Electron apps (too large for GitHub)
+reprompty/release*/
