@@ -374,7 +374,8 @@ electron.ipcMain.handle("send-to-detected", async (_event: any, args: { window: 
   if (
     win.backgroundRoute === "cdp-claude" ||
     win.backgroundRoute === "cdp-codex" ||
-    win.backgroundRoute === "cdp-kilo"
+    win.backgroundRoute === "cdp-kilo" ||
+    win.backgroundRoute === "cdp-kimi"
   ) {
     try {
       dbg("Trying CDP...");

@@ -28,6 +28,7 @@ const SUPPORTED_EDITOR_PROCESS_NAMES = new Set([
 const EDITOR_TITLE_SUBSTRINGS = [
   "Visual Studio Code",
   "Kilo Code",
+  "Kimi Code",
   "VSCodium",
   "Code: - OSS",
 ];
@@ -39,6 +40,91 @@ const KILO_PIPE_PREFIXES = ["kilo-ipc-", "kilo-code-", "roo-code-"];
 
 function isWaylandSession(): boolean {
   return process.env.XDG_SESSION_TYPE === "wayland" || !!process.env.WAYLAND_DISPLAY;
+}
+
+function getKdotoolPath(): string {
+  return nodePath.join(process.env.HOME || "", ".local", "bin", "kdotool");
+}
+
+function hasKdotool(): boolean {
+  try {
+    fs.accessSync(getKdotoolPath(), fs.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function listWindowsKdotool(): Array<{ pid: number; title: string; processName: string }> {
+  const kdotoolPath = getKdotoolPath();
+  const results: Array<{ pid: number; title: string; processName: string }> = [];
+  const seen = new Set<number>();
+
+  for (const term of EDITOR_TITLE_SUBSTRINGS) {
+    try {
+      const output = execSync(
+        `"${kdotoolPath}" search --title ${JSON.stringify(term)} --limit 0`,
+        { encoding: "utf-8", timeout: 5000 }
+      ).trim();
+
+      const lines = output.split("\n").map((l) => l.trim()).filter((l) => l.startsWith("{"));
+      for (const handleStr of lines) {
+        try {
+          const title = execSync(
+            `"${kdotoolPath}" getwindowname ${handleStr}`,
+            { encoding: "utf-8", timeout: 2000 }
+          ).trim();
+
+          if (!title || !isEditorWindowTitle(title)) {
+            continue;
+          }
+
+          let pid = 0;
+          try {
+            const pidStr = execSync(
+              `"${kdotoolPath}" getwindowpid ${handleStr}`,
+              { encoding: "utf-8", timeout: 2000 }
+            ).trim();
+            pid = parseInt(pidStr, 10);
+          } catch {
+            pid = 0;
+          }
+
+          if (pid && seen.has(pid)) {
+            continue;
+          }
+          if (pid) {
+            seen.add(pid);
+          }
+
+          let processName = "";
+          if (pid) {
+            try {
+              processName = execSync(`ps -p ${pid} -o comm=`, { encoding: "utf-8", timeout: 2000 }).trim();
+            } catch {
+              processName = "";
+            }
+          }
+
+          if (!processName) {
+            processName = fallbackProcessNameFromTitle(title);
+          }
+
+          if (!isSupportedEditorProcessName(processName)) {
+            continue;
+          }
+
+          results.push({ pid, title, processName });
+        } catch {
+          // skip individual window errors
+        }
+      }
+    } catch {
+      // search term failed
+    }
+  }
+
+  return results;
 }
 
 function getWritableTempDir(): string {
@@ -74,7 +160,7 @@ export function isSupportedEditorProcessName(name?: string | null): boolean {
 }
 
 export function fallbackProcessNameFromTitle(title: string): string {
-  return title.includes("Kilo Code") ? "kilocode" : "code";
+  return title.includes("Kilo Code") || title.includes("Kimi Code") ? "kilocode" : "code";
 }
 
 export function buildKiloPipeCandidates(pid: number): string[] {
@@ -368,7 +454,19 @@ export function listWindows(): WindowInfo[] {
     // wmctrl failed — likely on Wayland or not installed
   }
 
-  // Wayland fallback: if no editor windows found via wmctrl, use process listing
+  // KDE Wayland: use kdotool for real window titles before falling back to ps
+  if (windows.length === 0 && hasKdotool()) {
+    for (const win of listWindowsKdotool()) {
+      windows.push({
+        pid: win.pid,
+        title: win.title,
+        socketPath: resolveKiloPipePath(win.pid) ?? `/tmp/kilo-ipc-${win.pid}.sock`,
+        processName: win.processName,
+      });
+    }
+  }
+
+  // Wayland fallback: if no editor windows found via wmctrl or kdotool, use process listing
   if (windows.length === 0 && isWaylandSession()) {
     for (const proc of listEditorProcesses()) {
       windows.push({
@@ -505,7 +603,7 @@ export interface DetectedWindow {
   extension: AgentKind;
   activeAgent: AgentKind;
   availableAgents: Array<Exclude<AgentKind, "unknown">>;
-  backgroundRoute: "ipc-kilo" | "cdp-kilo" | "cdp-claude" | "cdp-codex" | "foreground";
+  backgroundRoute: "ipc-kilo" | "cdp-kilo" | "cdp-claude" | "cdp-codex" | "cdp-kimi" | "foreground";
   pipePath: string | null;
   sendMethod: "background" | "foreground";
 }
@@ -521,6 +619,9 @@ export function resolveBackgroundRoute(
   if (activeAgent === "kilo-code" && availableAgents.includes("kilo-code")) {
     return "cdp-kilo";
   }
+  if (activeAgent === "kimi-code" && availableAgents.includes("kimi-code")) {
+    return "cdp-kimi";
+  }
   if (activeAgent === "codex" && availableAgents.includes("codex")) {
     return "cdp-codex";
   }
@@ -530,6 +631,9 @@ export function resolveBackgroundRoute(
   // When agent is unknown, prefer Kilo Code: as the "start with" agent
   if (activeAgent === "unknown" && availableAgents.includes("kilo-code")) {
     return "cdp-kilo";
+  }
+  if (activeAgent === "unknown" && availableAgents.includes("kimi-code")) {
+    return "cdp-kimi";
   }
   if (activeAgent === "unknown" && availableAgents.includes("codex")) {
     return "cdp-codex";
@@ -558,6 +662,12 @@ export async function detectWindows(): Promise<DetectedWindow[]> {
   const results: DetectedWindow[] = [];
   const port = getCdpPort();
   const agentStates = port ? await getWindowAgentStates(port).catch(() => []) : [];
+
+  // KDE Wayland: use kdotool for real window titles when wmctrl has no results
+  let kdotoolWindows: Array<{ pid: number; title: string; processName: string }> = [];
+  if (lines.length === 0 && hasKdotool()) {
+    kdotoolWindows = listWindowsKdotool();
+  }
 
   // Build handle list for desktop assignment lookup
   const x11Handles = lines
@@ -594,11 +704,11 @@ export async function detectWindows(): Promise<DetectedWindow[]> {
 
     if (rawProcessName && !isSupportedEditorProcessName(rawProcessName)) continue;
 
-    const titleMatch = title.match(/^(.+?)\s+-\s+(Visual Studio Code|Kilo Code|VSCodium|Code: - OSS)/);
+    const titleMatch = title.match(/^(.+?)\s+-\s+(Visual Studio Code|Kilo Code|Kimi Code|VSCodium|Code: - OSS)/);
     const folderPath = titleMatch ? titleMatch[1].trim() : "";
     const processName = resolveDetectedWindowProcessName(rawProcessName, title);
     const normalizedProcessName = normalizeEditorProcessName(processName);
-    const isKilo = normalizedProcessName === "kilocode" || title.includes("Kilo Code");
+    const isKilo = normalizedProcessName === "kilocode" || title.includes("Kilo Code") || title.includes("Kimi Code");
     const pipePath = resolveKiloPipePath(pid);
     const pipeExists = Boolean(pipePath);
     const agentState = findWindowAgentState(agentStates, title);
@@ -633,15 +743,56 @@ export async function detectWindows(): Promise<DetectedWindow[]> {
     });
   }
 
+  // KDE Wayland kdotool path
+  for (const win of kdotoolWindows) {
+    if (seen.has(win.pid)) continue;
+    seen.add(win.pid);
+
+    const titleMatch = win.title.match(/^(.+?)\s+-\s+(Visual Studio Code|Kilo Code|Kimi Code|VSCodium|Code: - OSS)/);
+    const folderPath = titleMatch ? titleMatch[1].trim() : "";
+    const isKilo = win.processName === "kilocode" || win.title.includes("Kilo Code") || win.title.includes("Kimi Code");
+    const pipePath = resolveKiloPipePath(win.pid);
+    const pipeExists = Boolean(pipePath);
+    const agentState = findWindowAgentState(agentStates, win.title);
+    const activeAgent = agentState?.activeAgent ?? "unknown";
+    const availableAgents = agentState?.availableAgents ?? [];
+    const legacyExtension: DetectedWindow["extension"] = pipeExists
+      ? "kilo-code"
+      : isKilo
+      ? "kilo-code"
+      : "kilo-code";
+    const backgroundRoute = resolveBackgroundRoute(activeAgent, availableAgents, pipeExists);
+    const sendMethod: DetectedWindow["sendMethod"] =
+      backgroundRoute === "foreground" ? "foreground" : "background";
+    const extension: DetectedWindow["extension"] =
+      activeAgent === "unknown" ? legacyExtension : activeAgent;
+
+    results.push({
+      pid: win.pid,
+      handle: win.pid, // On Wayland there is no X11 handle; use PID as surrogate
+      title: win.title,
+      folderPath,
+      processName: win.processName,
+      desktop: undefined,
+      isCurrentDesktop: undefined,
+      extension,
+      activeAgent,
+      availableAgents,
+      backgroundRoute,
+      pipePath: pipeExists ? pipePath : null,
+      sendMethod,
+    });
+  }
+
   // Wayland fallback: if no editor windows found, use process listing
   if (results.length === 0 && (useWaylandFallback || isWaylandSession())) {
     for (const proc of listEditorProcesses()) {
       if (seen.has(proc.pid)) continue;
       seen.add(proc.pid);
 
-      const titleMatch = proc.title.match(/^(.+?)\s+-\s+(Visual Studio Code|Kilo Code|VSCodium|Code: - OSS)/);
+      const titleMatch = proc.title.match(/^(.+?)\s+-\s+(Visual Studio Code|Kilo Code|Kimi Code|VSCodium|Code: - OSS)/);
       const folderPath = titleMatch ? titleMatch[1].trim() : "";
-      const isKilo = proc.processName === "kilocode" || proc.title.includes("Kilo Code");
+      const isKilo = proc.processName === "kilocode" || proc.title.includes("Kilo Code") || proc.title.includes("Kimi Code");
       const pipePath = resolveKiloPipePath(proc.pid);
       const pipeExists = Boolean(pipePath);
       const agentState = findWindowAgentState(agentStates, proc.title);

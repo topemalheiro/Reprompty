@@ -11,7 +11,7 @@ export interface VSCodeWindowConfig {
   windowTitle?: string;
   windowHandle?: number;
   method: "foreground" | "background";
-  extension?: "kilo-code" | "claude-code" | "codex" | "unknown";
+  extension?: "kilo-code" | "claude-code" | "codex" | "kimi-code" | "unknown";
 }
 
 export interface VSCodeCLIConfig {
