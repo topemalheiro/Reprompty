@@ -3,7 +3,7 @@ import WebSocketLib from "ws";
 
 const WS = WebSocketLib;
 
-export type AgentKind = "claude-code" | "codex" | "kilo-code" | "unknown";
+export type AgentKind = "claude-code" | "codex" | "kilo-code" | "kimi-code" | "unknown";
 
 export interface CdpTarget {
   id: string;
@@ -48,6 +48,7 @@ function stripEditorSuffix(title: string): string {
   return title
     .replace(/\s+-\s+Visual Studio Code.*$/i, "")
     .replace(/\s+-\s+Kilo Code.*$/i, "")
+    .replace(/\s+-\s+Kimi Code.*$/i, "")
     .replace(/\s+-\s+VSCodium.*$/i, "")
     .replace(/\s+-\s+Code:\s+-\s+OSS.*$/i, "")
     .trim();
@@ -89,6 +90,9 @@ export function mapAgentLabelToKind(label?: string | null): AgentKind {
   if (normalized === "kilo code") {
     return "kilo-code";
   }
+  if (normalized === "kimi code") {
+    return "kimi-code";
+  }
   return "unknown";
 }
 
@@ -105,6 +109,9 @@ export function mapTargetUrlToAgent(url?: string | null): AgentKind {
   }
   if (normalized.includes("extensionid=kilocode.kilo-code")) {
     return "kilo-code";
+  }
+  if (normalized.includes("extensionid=kimicode.kimi-code")) {
+    return "kimi-code";
   }
   return "unknown";
 }
@@ -468,7 +475,7 @@ function getSendScript(agent: Exclude<AgentKind, "unknown">, message: string) {
     };
   }
 
-  if (agent === "kilo-code") {
+  if (agent === "kilo-code" || agent === "kimi-code") {
     return {
       inject: `
       (() => {

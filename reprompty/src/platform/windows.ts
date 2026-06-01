@@ -62,7 +62,7 @@ export function isSupportedEditorProcessName(name?: string | null): boolean {
 }
 
 export function fallbackProcessNameFromTitle(title: string): string {
-  return title.includes("Kilo Code") ? "kilocode" : "Code";
+  return title.includes("Kilo Code") || title.includes("Kimi Code") ? "kilocode" : "Code";
 }
 
 export function buildKiloPipeCandidates(pid: number): string[] {
@@ -350,7 +350,7 @@ export interface DetectedWindow {
   extension: AgentKind;
   activeAgent: AgentKind;
   availableAgents: Array<Exclude<AgentKind, "unknown">>;
-  backgroundRoute: "ipc-kilo" | "cdp-kilo" | "cdp-claude" | "cdp-codex" | "foreground";
+  backgroundRoute: "ipc-kilo" | "cdp-kilo" | "cdp-claude" | "cdp-codex" | "cdp-kimi" | "foreground";
   pipePath: string | null;
   sendMethod: "background" | "foreground";
 }
@@ -366,6 +366,9 @@ export function resolveBackgroundRoute(
   if (activeAgent === "kilo-code" && availableAgents.includes("kilo-code")) {
     return "cdp-kilo";
   }
+  if (activeAgent === "kimi-code" && availableAgents.includes("kimi-code")) {
+    return "cdp-kimi";
+  }
   if (activeAgent === "codex" && availableAgents.includes("codex")) {
     return "cdp-codex";
   }
@@ -375,6 +378,9 @@ export function resolveBackgroundRoute(
   // When agent is unknown, prefer Kilo Code: as the "start with" agent
   if (activeAgent === "unknown" && availableAgents.includes("kilo-code")) {
     return "cdp-kilo";
+  }
+  if (activeAgent === "unknown" && availableAgents.includes("kimi-code")) {
+    return "cdp-kimi";
   }
   if (activeAgent === "unknown" && availableAgents.includes("codex")) {
     return "cdp-codex";
@@ -423,7 +429,7 @@ $callback = [WinDetect+EnumWindowsProc]{
   $sb = New-Object System.Text.StringBuilder($length + 1)
   [WinDetect]::GetWindowText($hWnd, $sb, $sb.Capacity) | Out-Null
   $title = $sb.ToString()
-  if ($title -like "*Visual Studio Code*" -or $title -like "*Kilo Code*") {
+  if ($title -like "*Visual Studio Code*" -or $title -like "*Kilo Code*" -or $title -like "*Kimi Code*") {
     $wpid = [uint32]0
     [WinDetect]::GetWindowThreadProcessId($hWnd, [ref]$wpid) | Out-Null
     $handleInt = $hWnd.ToInt64()
@@ -481,13 +487,13 @@ $results | ForEach-Object { Write-Output $_ }
         continue;
       }
 
-      // Extract folder from title: "folder - Visual Studio Code" or "folder - Kilo Code"
-      const titleMatch = title.match(/^(.+?)\s+-\s+(Visual Studio Code|Kilo Code)/);
+      // Extract folder from title: "folder - Visual Studio Code" or "folder - Kilo Code" or "folder - Kimi Code"
+      const titleMatch = title.match(/^(.+?)\s+-\s+(Visual Studio Code|Kilo Code|Kimi Code)/);
       const folderPath = titleMatch ? titleMatch[1].trim() : "";
       const processName = resolveDetectedWindowProcessName(rawProcessName, title);
       const normalizedProcessName = normalizeEditorProcessName(processName);
       const isKilo =
-        normalizedProcessName === "kilocode" || title.includes("Kilo Code");
+        normalizedProcessName === "kilocode" || title.includes("Kilo Code") || title.includes("Kimi Code");
 
       // Probe for IPC pipe (supports Kilo and legacy Roo pipe naming)
       const pipePath = resolveKiloPipePath(pid);

@@ -1132,11 +1132,12 @@ export async function callTool(
         }
       }
 
-      // Fall back to CDP for Kilo Code:, Codex, and Claude Code:
+      // Fall back to CDP for Kilo Code:, Kimi Code:, Codex, and Claude Code:
       if (
         cfg.extension === "claude-code" ||
         cfg.extension === "codex" ||
-        cfg.extension === "kilo-code"
+        cfg.extension === "kilo-code" ||
+        cfg.extension === "kimi-code"
       ) {
         const port = getCdpPort();
         if (port) {
@@ -1228,7 +1229,8 @@ export async function callTool(
           if (!sent && (
             cfg.extension === "claude-code" ||
             cfg.extension === "codex" ||
-            cfg.extension === "kilo-code"
+            cfg.extension === "kilo-code" ||
+            cfg.extension === "kimi-code"
           )) {
             const port = getCdpPort();
             if (!port) {

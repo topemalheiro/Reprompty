@@ -9,10 +9,10 @@ interface DetectedWindow {
   processName: string;
   desktop?: string;
   isCurrentDesktop?: boolean;
-  extension: "kilo-code" | "claude-code" | "codex" | "unknown";
-  activeAgent: "kilo-code" | "claude-code" | "codex" | "unknown";
-  availableAgents: Array<"kilo-code" | "claude-code" | "codex">;
-  backgroundRoute: "ipc-kilo" | "cdp-kilo" | "cdp-claude" | "cdp-codex" | "foreground";
+  extension: "kilo-code" | "claude-code" | "codex" | "kimi-code" | "unknown";
+  activeAgent: "kilo-code" | "claude-code" | "codex" | "kimi-code" | "unknown";
+  availableAgents: Array<"kilo-code" | "claude-code" | "codex" | "kimi-code">;
+  backgroundRoute: "ipc-kilo" | "cdp-kilo" | "cdp-claude" | "cdp-codex" | "cdp-kimi" | "foreground";
   pipePath: string | null;
   sendMethod: "background" | "foreground";
 }
@@ -353,6 +353,7 @@ function App() {
     const parts = windowInfo.title
       .replace(/ - Visual Studio Code.*$/, "")
       .replace(/ - Kilo Code.*$/, "")
+    .replace(/ - Kimi Code.*$/, "")
       .split(" - ");
     if (parts.length >= 2) {
       const file = parts[0].trim();
@@ -503,7 +504,7 @@ function App() {
               <option value="">Select a window...</option>
               {detectedWindows.map((windowInfo) => {
                 const agent =
-                  windowInfo.activeAgent === "kilo-code"
+                  windowInfo.activeAgent === "kilo-code" || windowInfo.activeAgent === "kimi-code"
                     ? "Kilo"
                     : windowInfo.activeAgent === "claude-code"
                     ? "Claude"
