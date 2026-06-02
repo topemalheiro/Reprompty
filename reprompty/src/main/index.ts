@@ -257,6 +257,26 @@ electron.app.whenReady().then(() => {
     console.error("[Main] Script auto-start failed:", err);
   }
 
+  // Register global shortcuts for layout slots
+  try {
+    const slots = layoutManager.listSlots();
+    for (const slot of slots) {
+      if (slot.hotkey) {
+        const registered = electron.globalShortcut.register(slot.hotkey, () => {
+          console.log(`[GlobalShortcut] Triggered slot ${slot.letter}: ${slot.name}`);
+          layoutManager.applySlotByLetter(slot.letter);
+        });
+        if (registered) {
+          console.log(`[GlobalShortcut] Registered ${slot.hotkey} for slot ${slot.letter}`);
+        } else {
+          console.warn(`[GlobalShortcut] Failed to register ${slot.hotkey} for slot ${slot.letter}`);
+        }
+      }
+    }
+  } catch (err) {
+    console.error("[GlobalShortcut] Registration failed:", err);
+  }
+
   // Start window auto-detection polling (every 5 seconds)
   setInterval(async () => {
     try {
