@@ -24,7 +24,8 @@ VSCodeSidePanelLayout/
 .auto-claude/
 
 # Reprompty generated directories
-.kilo/
+.kilo/*
+!.kilo/skills/
 plans/
 
 # Aperant-MCP generated files

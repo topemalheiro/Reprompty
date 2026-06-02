@@ -175,6 +175,39 @@ In the **Scripts** tab, click **+ Add MCP tool** inside a script card and set:
 - Output from MCP-triggered runs is appended to the script terminal with a `[MCP:<toolName>]` prefix.
 - Reprompty passes `-WindowHandle` and `-LogPath` automatically for built-in layout calls, so layout scripts can target an exact VS Code window and write a per-run transcript without changing user-facing flags.
 
+## Linux Global Shortcuts (KDE / Wayland)
+
+On Linux, Reprompty uses **KDE's global shortcut system** (`kglobalaccel`) so layouts work even when Reprompty itself is not running.
+
+### How it connects
+
+1. **`~/.reprompty/layouts.json`** — stores slot coordinates (`windowX`, `windowY`, `windowWidth`, `windowHeight`, `panelWidth`) and `scriptArgs`  
+   - Slot A: `"scriptArgs": ["--once", "--slot", "A"]`  
+   - Slot B: `"scriptArgs": ["--once", "--slot", "B"]`
+
+2. **`~/.reprompty/scripts.json`** — set `"autoStart": false` so the layout script does **not** resize VS Code: on Reprompty launch.
+
+3. **Wrapper scripts** (`reprompty/linux/layout-dual.sh`, `layout-single.sh`)  
+   - Call `linux_layout.py --once --slot A` (or `B`)  
+   - The script reads the slot coordinates from `layouts.json` and applies them to the active VS Code: window via CDP.
+
+4. **KDE shortcut registration**  
+   - `~/.local/share/applications/reprompty-layout-dual.desktop` → `Ctrl+Alt+V`  
+   - `~/.local/share/applications/reprompty-layout-single.desktop` → `Ctrl+Alt+N`  
+   - `~/.config/kglobalshortcutsrc` maps the keys to the `.desktop` files  
+   - `~/.config/khotkeysrc` stores the direct command fallback
+
+5. **Session restart required**  
+   - KDE's `kglobalaccel` daemon caches `.desktop` file `Exec=` lines in memory.  
+   - After changing `.desktop` files or `kglobalshortcutsrc`, **log out and back in** for the changes to take effect.
+
+### Troubleshooting
+
+- **Shortcut does nothing** → Log out / back in. KDE has the old command cached.
+- **Layout goes to wrong position** → Check `~/.reprompty/layouts.json` slot coordinates. The script uses those exact values when called with `--slot A/B`.
+- **"No VS Code: window found"** → Make sure a VS Code: window is open before pressing the shortcut.
+- **Reprompty resizes VS Code: on launch** → Verify `"autoStart": false` in `scripts.json`.
+
 ## Layout Debug Logs
 
 Reprompty now writes two useful log streams for layout troubleshooting:
