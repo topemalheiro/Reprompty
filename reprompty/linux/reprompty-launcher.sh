@@ -2,7 +2,7 @@
 # Reprompty launcher for Linux KDE
 
 export PATH="$HOME/.local/node/bin:$PATH"
-REPO_DIR="/home/tope/Projects/OS Toolkit/Reprompty/reprompty"
+REPO_DIR="/home/tope/Projects/OS-Toolkit/Reprompty/reprompty"
 RELEASE_EXE="$REPO_DIR/release9/linux-unpacked/reprompty"
 
 if [ -x "$RELEASE_EXE" ]; then
