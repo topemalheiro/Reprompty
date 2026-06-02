@@ -51,7 +51,7 @@ function getDefaultScriptPath(): string {
     // When running from reprompty/ subdirectory
     path.join(__dirname, "..", "..", "..", "VSCodeSidePanelLayout", "linux_layout.py"),
     // Absolute fallback for this specific machine
-    "/home/user/Projects/OS Toolkit/Reprompty/VSCodeSidePanelLayout/linux_layout.py",
+    "/home/user/Projects/OS-Toolkit/Reprompty/VSCodeSidePanelLayout/linux_layout.py",
   ];
   for (const candidate of candidates) {
     try {
