@@ -291,7 +291,7 @@ export class LayoutManager {
     if (!slot) {
       return Promise.resolve({ success: false, error: `Slot not found: ${id}` });
     }
-    return this.runLayoutScript(slot.scriptArgs, target);
+    return this.runLayoutScript(slot.scriptArgs, target, slot);
   }
 
   applySlotByLetter(
@@ -305,12 +305,13 @@ export class LayoutManager {
         error: `Slot "${letter}" not found`,
       });
     }
-    return this.runLayoutScript(slot.scriptArgs, target);
+    return this.runLayoutScript(slot.scriptArgs, target, slot);
   }
 
   private runLayoutScript(
     args: string[],
-    target: LayoutTarget = {}
+    target: LayoutTarget = {},
+    slot?: LayoutSlot
   ): Promise<LayoutApplyResult> {
     return new Promise((resolve) => {
       const scriptPath = this.config.scriptPath;
@@ -328,6 +329,15 @@ export class LayoutManager {
         fullArgs.push(IS_WINDOWS ? "-WindowHandle" : "--window-handle", String(target.windowHandle));
       } else if (target.windowTitle) {
         fullArgs.push(IS_WINDOWS ? "-WindowTitle" : "--window-title", target.windowTitle);
+      }
+
+      // Pass slot coordinates so the script uses layouts.json values instead of auto-detect
+      if (slot && !IS_WINDOWS) {
+        fullArgs.push("--x", String(slot.windowX));
+        fullArgs.push("--y", String(slot.windowY));
+        fullArgs.push("--width", String(slot.windowWidth));
+        fullArgs.push("--height", String(slot.windowHeight));
+        fullArgs.push("--panel-width", String(slot.panelWidth));
       }
 
       const logPath = createLayoutRunLogPath();
