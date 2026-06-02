@@ -13,8 +13,8 @@ Actions=LayoutDual;LayoutSingle;
 
 [Desktop Action LayoutDual]
 Name=Dual Monitor Layout
-Exec=python3 "/home/tope/Projects/OS-Toolkit/Reprompty/VSCodeSidePanelLayout/linux_layout.py" --once --dual
+Exec=python3 "/home/tope/Projects/OS-Toolkit/Reprompty/VSCodeSidePanelLayout/linux_layout.py" --once --slot A
 
 [Desktop Action LayoutSingle]
 Name=Single Monitor Layout
-Exec=python3 "/home/tope/Projects/OS-Toolkit/Reprompty/VSCodeSidePanelLayout/linux_layout.py" --once --single
+Exec=python3 "/home/tope/Projects/OS-Toolkit/Reprompty/VSCodeSidePanelLayout/linux_layout.py" --once --slot B
