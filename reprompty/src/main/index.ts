@@ -120,6 +120,7 @@ function createWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       preload: join(__dirname, "../preload/index.js"),
+      webviewTag: true,
     },
   });
 
@@ -620,6 +621,55 @@ electron.ipcMain.handle("layouts-get-script-path", async () => {
 electron.ipcMain.handle("layouts-set-script-path", async (_event: any, scriptPath: string) => {
   layoutManager.setScriptPath(scriptPath);
   return true;
+});
+
+// ============================================================================
+// PORTAINER PROXY (bypasses renderer self-signed cert restrictions)
+// ============================================================================
+
+import https from "node:https";
+
+electron.ipcMain.handle("portainer-fetch", async (_event: any, method: string, url: string, body?: string) => {
+  return new Promise<{ ok: boolean; status: number; data: string }>((resolve) => {
+    const options = new URL(url);
+    const reqOptions: https.RequestOptions = {
+      hostname: options.hostname,
+      port: options.port,
+      path: options.pathname + options.search,
+      method: method.toUpperCase(),
+      rejectUnauthorized: false,
+      headers: {
+        "Content-Type": "application/json",
+      },
+    };
+
+    const req = https.request(reqOptions, (res) => {
+      let data = "";
+      res.on("data", (chunk) => { data += chunk; });
+      res.on("end", () => {
+        resolve({ ok: res.statusCode !== undefined && res.statusCode >= 200 && res.statusCode < 300, status: res.statusCode || 0, data });
+      });
+    });
+
+    req.on("error", (err) => {
+      resolve({ ok: false, status: 0, data: String(err) });
+    });
+
+    if (body) {
+      req.write(body);
+    }
+    req.end();
+  });
+});
+
+// Allow self-signed certificates for local Portainer
+electron.app.on("certificate-error", (event, _webContents, url, _error, _certificate, callback) => {
+  if (url.includes("localhost:9443") || url.includes("127.0.0.1:9443")) {
+    event.preventDefault();
+    callback(true);
+  } else {
+    callback(false);
+  }
 });
 
 // Clean shutdown - stop all scripts

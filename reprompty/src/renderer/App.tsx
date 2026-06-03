@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import ScriptsTab from "./ScriptsTab";
+import PortainerTab from "./PortainerTab";
 
 interface DetectedWindow {
   pid: number;
@@ -87,6 +88,7 @@ interface ElectronAPI {
   onScriptOutput: (callback: (data: unknown) => void) => void;
   onScriptStatusChanged: (callback: (data: unknown) => void) => void;
   removeScriptListeners: () => void;
+  portainerFetch: (method: string, url: string, body?: string) => Promise<{ ok: boolean; status: number; data: string }>;
 }
 
 declare global {
@@ -145,7 +147,7 @@ function Mascot() {
 }
 
 function App() {
-  const [activeTab, setActiveTab] = useState<"windows" | "send" | "spawn" | "scripts">("windows");
+  const [activeTab, setActiveTab] = useState<"windows" | "send" | "spawn" | "scripts" | "portainer">("windows");
   const [detectedWindows, setDetectedWindows] = useState<DetectedWindow[]>([]);
   const [spawnTargets, setSpawnTargets] = useState<SpawnTarget[]>([]);
   const [virtualDesktops, setVirtualDesktops] = useState<VirtualDesktopInfo[]>([]);
@@ -416,6 +418,7 @@ function App() {
           ["send", "Send Prompt"],
           ["spawn", "Spawn"],
           ["scripts", "Scripts"],
+          ["portainer", "Portainer"],
         ] as const).map(([id, label]) => (
           <button
             key={id}
@@ -687,6 +690,8 @@ function App() {
         )}
 
         {activeTab === "scripts" && <ScriptsTab setStatus={setStatus} />}
+
+        {activeTab === "portainer" && <PortainerTab />}
 
         {status && <div style={styles.status}>{status}</div>}
       </main>

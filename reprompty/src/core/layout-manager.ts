@@ -43,37 +43,58 @@ function getDefaultScriptPath(): string {
   if (IS_WINDOWS) {
     return "C:\\Users\\topem\\scripts\\VSCodeSidePanelLayout\\VSCodeSidePanelLayout.ps1";
   }
-  // Linux: prefer the Cython-compiled binary, fall back to Python script
-  const clientCandidates = [
+  // Linux: prefer the Cython-compiled binary if it's newer than the Python script
+  const cythonCandidates = [
     path.join(__dirname, "..", "..", "VSCodeSidePanelLayout", "reprompty-layout-cython"),
     path.join(__dirname, "..", "..", "..", "VSCodeSidePanelLayout", "reprompty-layout-cython"),
     "/home/tope/Projects/OS-Toolkit/Reprompty/VSCodeSidePanelLayout/reprompty-layout-cython",
   ];
-  for (const candidate of clientCandidates) {
+  const pythonCandidates = [
+    path.join(__dirname, "..", "..", "VSCodeSidePanelLayout", "linux_layout.py"),
+    path.join(__dirname, "..", "..", "..", "VSCodeSidePanelLayout", "linux_layout.py"),
+    "/home/tope/Projects/OS-Toolkit/Reprompty/VSCodeSidePanelLayout/linux_layout.py",
+  ];
+
+  let cythonPath: string | null = null;
+  for (const candidate of cythonCandidates) {
     try {
       if (fs.existsSync(candidate)) {
-        return candidate;
+        cythonPath = candidate;
+        break;
       }
     } catch {
       // Continue
     }
   }
-  // Fall back to Python script
-  const candidates = [
-    path.join(__dirname, "..", "..", "VSCodeSidePanelLayout", "linux_layout.py"),
-    path.join(__dirname, "..", "..", "..", "VSCodeSidePanelLayout", "linux_layout.py"),
-    "/home/tope/Projects/OS-Toolkit/Reprompty/VSCodeSidePanelLayout/linux_layout.py",
-  ];
-  for (const candidate of candidates) {
+
+  let pythonPath: string | null = null;
+  for (const candidate of pythonCandidates) {
     try {
       if (fs.existsSync(candidate)) {
-        return candidate;
+        pythonPath = candidate;
+        break;
       }
     } catch {
       // Continue to next candidate
     }
   }
-  return clientCandidates[0];
+
+  if (cythonPath && pythonPath) {
+    try {
+      const cythonStat = fs.statSync(cythonPath);
+      const pythonStat = fs.statSync(pythonPath);
+      if (cythonStat.mtime >= pythonStat.mtime) {
+        return cythonPath;
+      }
+    } catch {
+      // fall through
+    }
+  }
+
+  if (cythonPath) return cythonPath;
+  if (pythonPath) return pythonPath;
+
+  return cythonCandidates[0];
 }
 
 const LAYOUT_LOG_DIR_NAME = "VSCodeSidePanelLayout";

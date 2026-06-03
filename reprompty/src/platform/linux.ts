@@ -15,6 +15,8 @@ export interface WindowInfo {
   title: string;
   socketPath: string;
   processName?: string;
+  /** KDE Wayland kdotool UUID handle (if available) */
+  kdotoolHandle?: string;
 }
 
 const VS_CODE_PROCESS_NAMES = new Set(["code", "code-oss", "vscodium", "codium"]);
@@ -55,9 +57,9 @@ function hasKdotool(): boolean {
   }
 }
 
-function listWindowsKdotool(): Array<{ pid: number; title: string; processName: string }> {
+function listWindowsKdotool(): Array<{ pid: number; title: string; processName: string; handle: string }> {
   const kdotoolPath = getKdotoolPath();
-  const results: Array<{ pid: number; title: string; processName: string }> = [];
+  const results: Array<{ pid: number; title: string; processName: string; handle: string }> = [];
   const seen = new Set<number>();
 
   for (const term of EDITOR_TITLE_SUBSTRINGS) {
@@ -114,7 +116,7 @@ function listWindowsKdotool(): Array<{ pid: number; title: string; processName: 
             continue;
           }
 
-          results.push({ pid, title, processName });
+          results.push({ pid, title, processName, handle: handleStr });
         } catch {
           // skip individual window errors
         }
@@ -125,6 +127,34 @@ function listWindowsKdotool(): Array<{ pid: number; title: string; processName: 
   }
 
   return results;
+}
+
+function findKdotoolHandleByPid(pid: number): string | null {
+  if (!hasKdotool()) return null;
+  const kdotoolPath = getKdotoolPath();
+  try {
+    const output = execSync(
+      `"${kdotoolPath}" search ".*"`,
+      { encoding: "utf-8", timeout: 5000 }
+    ).trim();
+    const lines = output.split("\n").map((l) => l.trim()).filter((l) => l.startsWith("{"));
+    for (const handle of lines) {
+      try {
+        const pidStr = execSync(
+          `"${kdotoolPath}" getwindowpid ${handle}`,
+          { encoding: "utf-8", timeout: 2000 }
+        ).trim();
+        if (parseInt(pidStr, 10) === pid) {
+          return handle;
+        }
+      } catch {
+        // continue
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return null;
 }
 
 function getWritableTempDir(): string {
@@ -462,6 +492,7 @@ export function listWindows(): WindowInfo[] {
         title: win.title,
         socketPath: resolveKiloPipePath(win.pid) ?? `/tmp/kilo-ipc-${win.pid}.sock`,
         processName: win.processName,
+        kdotoolHandle: win.handle,
       });
     }
   }
@@ -483,7 +514,7 @@ export function listWindows(): WindowInfo[] {
 
 /**
  * Send a message to a window via foreground clipboard+key simulation.
- * On X11 uses xdotool. On Wayland uses wl-copy + ydotool (requires ydotoold).
+ * On X11 uses xdotool. On Wayland uses kdotool windowactivate + wl-copy + wtype/ydotool.
  */
 export async function sendMessageForeground(
   windowHandle: number,
@@ -495,7 +526,10 @@ export async function sendMessageForeground(
     fs.writeFileSync(msgFile, message, "utf-8");
 
     if (isWaylandSession()) {
-      // Wayland path: wl-copy + ydotool
+      // Wayland path: kdotool focus + wl-copy + wtype/ydotool
+      const kdotoolPath = getKdotoolPath();
+      const kdotoolHandle = hasKdotool() ? findKdotoolHandleByPid(windowHandle) : null;
+
       const script = `
 #!/bin/bash
 msg_file="${msgFile}"
@@ -510,21 +544,29 @@ else
   exit 1
 fi
 
-# Ensure ydotoold socket is available; start if needed
-if [ ! -S /run/user/$(id - u)/ydotoold_socket ]; then
-  ydotoold --socket-path=/run/user/$(id - u)/ydotoold_socket --socket-own=$(id - u):$(id - g) &
-  sleep 0.5
+# Focus window using kdotool if available
+${kdotoolHandle ? `"${kdotoolPath}" windowactivate ${kdotoolHandle}` : "# kdotool handle not found"}
+${kdotoolHandle ? "sleep 0.15" : "# skipping focus wait"}
+
+# Paste and send — prefer wtype (no daemon), fall back to ydotool
+if command -v wtype >/dev/null 2>&1; then
+  wtype -M ctrl -k v -m ctrl
+  sleep 0.1
+  wtype -k Return
+elif command -v ydotool >/dev/null 2>&1; then
+  # Ensure ydotoold socket is available; start if needed
+  if [ ! -S /run/user/$(id - u)/ydotoold_socket ]; then
+    ydotoold --socket-path=/run/user/$(id - u)/ydotoold_socket --socket-own=$(id - u):$(id - g) &
+    sleep 0.5
+  fi
+  export YDOTOOL_SOCKET=/run/user/$(id - u)/ydotoold_socket
+  ydotool key 29:1 47:1 47:0 29:0
+  sleep 0.1
+  ydotool key 28:1 28:0
+else
+  echo "No typing tool available (wtype or ydotool)" >&2
+  exit 1
 fi
-
-export YDOTOOL_SOCKET=/run/user/$(id - u)/ydotoold_socket
-
-# Paste (Ctrl+V)
-ydotool key 29:1 47:1 47:0 29:0
-sleep 0.1
-
-# Press Enter
-ydotool key 28:1 28:0
-sleep 0.05
 
 echo "sent"
 `;
@@ -606,6 +648,8 @@ export interface DetectedWindow {
   backgroundRoute: "ipc-kilo" | "cdp-kilo" | "cdp-claude" | "cdp-codex" | "cdp-kimi" | "foreground";
   pipePath: string | null;
   sendMethod: "background" | "foreground";
+  /** KDE Wayland kdotool UUID handle (if available) */
+  kdotoolHandle?: string;
 }
 
 export function resolveBackgroundRoute(
@@ -663,10 +707,15 @@ export async function detectWindows(): Promise<DetectedWindow[]> {
   const port = getCdpPort();
   const agentStates = port ? await getWindowAgentStates(port).catch(() => []) : [];
 
-  // KDE Wayland: use kdotool for real window titles when wmctrl has no results
-  let kdotoolWindows: Array<{ pid: number; title: string; processName: string }> = [];
-  if (lines.length === 0 && hasKdotool()) {
-    kdotoolWindows = listWindowsKdotool();
+  // Fetch virtual desktop names for mapping kdotool desktop indices (eagerly loaded)
+  let virtualDesktops: Array<{ index: number; name: string; isCurrent: boolean }> = [];
+  if (hasKdotool()) {
+    try {
+      const { listVirtualDesktops } = await import("../core/virtual-desktop-manager.js");
+      virtualDesktops = await listVirtualDesktops();
+    } catch {
+      virtualDesktops = [];
+    }
   }
 
   // Build handle list for desktop assignment lookup
@@ -743,45 +792,69 @@ export async function detectWindows(): Promise<DetectedWindow[]> {
     });
   }
 
-  // KDE Wayland kdotool path
-  for (const win of kdotoolWindows) {
-    if (seen.has(win.pid)) continue;
-    seen.add(win.pid);
+  // KDE Wayland kdotool path: when wmctrl found no editor windows, try kdotool
+  if (results.length === 0 && hasKdotool()) {
+    const kdotoolWindows = listWindowsKdotool();
+    for (const win of kdotoolWindows) {
+      if (seen.has(win.pid)) continue;
+      seen.add(win.pid);
 
-    const titleMatch = win.title.match(/^(.+?)\s+-\s+(Visual Studio Code|Kilo Code|Kimi Code|VSCodium|Code: - OSS)/);
-    const folderPath = titleMatch ? titleMatch[1].trim() : "";
-    const isKilo = win.processName === "kilocode" || win.title.includes("Kilo Code") || win.title.includes("Kimi Code");
-    const pipePath = resolveKiloPipePath(win.pid);
-    const pipeExists = Boolean(pipePath);
-    const agentState = findWindowAgentState(agentStates, win.title);
-    const activeAgent = agentState?.activeAgent ?? "unknown";
-    const availableAgents = agentState?.availableAgents ?? [];
-    const legacyExtension: DetectedWindow["extension"] = pipeExists
-      ? "kilo-code"
-      : isKilo
-      ? "kilo-code"
-      : "kilo-code";
-    const backgroundRoute = resolveBackgroundRoute(activeAgent, availableAgents, pipeExists);
-    const sendMethod: DetectedWindow["sendMethod"] =
-      backgroundRoute === "foreground" ? "foreground" : "background";
-    const extension: DetectedWindow["extension"] =
-      activeAgent === "unknown" ? legacyExtension : activeAgent;
+      const titleMatch = win.title.match(/^(.+?)\s+-\s+(Visual Studio Code|Kilo Code|Kimi Code|VSCodium|Code: - OSS)/);
+      const folderPath = titleMatch ? titleMatch[1].trim() : "";
+      const isKilo = win.processName === "kilocode" || win.title.includes("Kilo Code") || win.title.includes("Kimi Code");
+      const pipePath = resolveKiloPipePath(win.pid);
+      const pipeExists = Boolean(pipePath);
+      const agentState = findWindowAgentState(agentStates, win.title);
+      const activeAgent = agentState?.activeAgent ?? "unknown";
+      const availableAgents = agentState?.availableAgents ?? [];
+      const legacyExtension: DetectedWindow["extension"] = pipeExists
+        ? "kilo-code"
+        : isKilo
+        ? "kilo-code"
+        : "kilo-code";
+      const backgroundRoute = resolveBackgroundRoute(activeAgent, availableAgents, pipeExists);
+      const sendMethod: DetectedWindow["sendMethod"] =
+        backgroundRoute === "foreground" ? "foreground" : "background";
+      const extension: DetectedWindow["extension"] =
+        activeAgent === "unknown" ? legacyExtension : activeAgent;
 
-    results.push({
-      pid: win.pid,
-      handle: win.pid, // On Wayland there is no X11 handle; use PID as surrogate
-      title: win.title,
-      folderPath,
-      processName: win.processName,
-      desktop: undefined,
-      isCurrentDesktop: undefined,
-      extension,
-      activeAgent,
-      availableAgents,
-      backgroundRoute,
-      pipePath: pipeExists ? pipePath : null,
-      sendMethod,
-    });
+      // Query desktop assignment via kdotool
+      let desktop: string | undefined;
+      let isCurrentDesktop: boolean | undefined;
+      if (win.handle) {
+        try {
+          const desktopIndexStr = execSync(
+            `"${getKdotoolPath()}" get_desktop_for_window ${win.handle}`,
+            { encoding: "utf-8", timeout: 2000 }
+          ).trim();
+          const desktopIndex = parseInt(desktopIndexStr, 10);
+          const desktopInfo = virtualDesktops.find((d) => d.index === desktopIndex);
+          if (desktopInfo) {
+            desktop = desktopInfo.name;
+            isCurrentDesktop = desktopInfo.isCurrent;
+          }
+        } catch {
+          // ignore desktop query errors
+        }
+      }
+
+      results.push({
+        pid: win.pid,
+        handle: win.pid, // On Wayland there is no X11 handle; use PID as surrogate
+        title: win.title,
+        folderPath,
+        processName: win.processName,
+        desktop,
+        isCurrentDesktop,
+        extension,
+        activeAgent,
+        availableAgents,
+        backgroundRoute,
+        pipePath: pipeExists ? pipePath : null,
+        sendMethod,
+        kdotoolHandle: win.handle,
+      });
+    }
   }
 
   // Wayland fallback: if no editor windows found, use process listing
@@ -851,6 +924,8 @@ export interface AllWindowInfo {
   pid: number;
   title: string;
   processName: string;
+  /** KDE Wayland kdotool UUID handle (if available) */
+  kdotoolHandle?: string;
 }
 
 /**
@@ -893,7 +968,66 @@ export function detectAllWindows(): AllWindowInfo[] {
     // wmctrl failed
   }
 
-  // Wayland fallback: include all processes with visible window titles
+  // Wayland fallback: use kdotool to list real windows
+  if (windows.length === 0 && isWaylandSession() && hasKdotool()) {
+    try {
+      const kdotoolPath = getKdotoolPath();
+      const output = execSync(
+        `"${kdotoolPath}" search ".*"`,
+        { encoding: "utf-8", timeout: 10000 }
+      );
+      const lines = output.split("\n").map((l) => l.trim()).filter((l) => l.startsWith("{"));
+      const seenHandles = new Set<string>();
+
+      for (const handle of lines) {
+        if (seenHandles.has(handle)) continue;
+        seenHandles.add(handle);
+
+        let title = "";
+        try {
+          title = execSync(
+            `"${kdotoolPath}" getwindowname ${handle}`,
+            { encoding: "utf-8", timeout: 2000 }
+          ).trim();
+        } catch {
+          continue;
+        }
+        if (!title) continue;
+
+        let pid = 0;
+        try {
+          const pidStr = execSync(
+            `"${kdotoolPath}" getwindowpid ${handle}`,
+            { encoding: "utf-8", timeout: 2000 }
+          ).trim();
+          pid = parseInt(pidStr, 10);
+        } catch {
+          pid = 0;
+        }
+
+        let processName = "";
+        if (pid) {
+          try {
+            processName = execSync(`ps -p ${pid} -o comm=`, { encoding: "utf-8", timeout: 2000 }).trim();
+          } catch {
+            processName = "";
+          }
+        }
+
+        windows.push({
+          handle: pid || 0,
+          pid: pid || 0,
+          title,
+          processName: processName || "unknown",
+          kdotoolHandle: handle,
+        });
+      }
+    } catch (err) {
+      console.error("[detectAllWindows] kdotool fallback error:", err);
+    }
+  }
+
+  // Final fallback: process listing if kdotool is unavailable
   if (windows.length === 0 && isWaylandSession()) {
     try {
       const psOutput = execSync("ps -eo pid,comm,args", { encoding: "utf-8", timeout: 5000 });
@@ -923,7 +1057,7 @@ export function detectAllWindows(): AllWindowInfo[] {
         });
       }
     } catch (err) {
-      console.error("[detectAllWindows] Wayland fallback error:", err);
+      console.error("[detectAllWindows] Wayland ps fallback error:", err);
     }
   }
 

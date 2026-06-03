@@ -174,9 +174,12 @@ function findAgentIframeTarget(
   group: CdpWindowTargetGroup,
   agent: Exclude<AgentKind, "unknown">
 ): CdpTarget | null {
-  return (
-    group.iframes.find((target) => mapTargetUrlToAgent(target.url) === agent) ?? null
-  );
+  const exact = group.iframes.find((target) => mapTargetUrlToAgent(target.url) === agent);
+  if (exact) return exact;
+  // Fallback: if only one iframe exists, assume it's the active agent's webview
+  // (handles cases where the extension URL doesn't match our hardcoded patterns)
+  if (group.iframes.length === 1) return group.iframes[0];
+  return null;
 }
 
 async function getCdpTargets(port: number): Promise<CdpTarget[]> {
