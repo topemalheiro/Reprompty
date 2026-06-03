@@ -1,2 +1,2 @@
 #!/bin/bash
-python3 "/home/user/Projects/OS-Toolkit/Reprompty/VSCodeSidePanelLayout/linux_layout.py" --once --slot B "$@"
+/home/user/Projects/OS-Toolkit/Reprompty/VSCodeSidePanelLayout/daemon/build/reprompty-layout --slot B "$@"
