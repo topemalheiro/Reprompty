@@ -1,2 +1,2 @@
 #!/bin/bash
-/home/tope/Projects/OS-Toolkit/Reprompty/VSCodeSidePanelLayout/daemon/build/reprompty-layout --slot A "$@"
+/home/tope/Projects/OS-Toolkit/Reprompty/VSCodeSidePanelLayout/reprompty-layout-cython --once --slot A "$@"
