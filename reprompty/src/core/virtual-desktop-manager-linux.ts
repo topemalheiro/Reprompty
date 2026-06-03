@@ -652,6 +652,47 @@ export async function switchToVirtualDesktop(
   }
 }
 
+function getKdotoolPath(): string {
+  return nodePath.join(process.env.HOME || "", ".local", "bin", "kdotool");
+}
+
+function hasKdotool(): boolean {
+  try {
+    fs.accessSync(getKdotoolPath(), fs.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function findKdotoolHandleByPid(pid: number): string | null {
+  if (!hasKdotool()) return null;
+  const kdotoolPath = getKdotoolPath();
+  try {
+    const output = execSync(
+      `"${kdotoolPath}" search ".*"`,
+      { encoding: "utf-8", timeout: 5000 }
+    ).trim();
+    const lines = output.split("\n").map((l) => l.trim()).filter((l) => l.startsWith("{"));
+    for (const handle of lines) {
+      try {
+        const pidStr = execSync(
+          `"${kdotoolPath}" getwindowpid ${handle}`,
+          { encoding: "utf-8", timeout: 2000 }
+        ).trim();
+        if (parseInt(pidStr, 10) === pid) {
+          return handle;
+        }
+      } catch {
+        // continue
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
 export async function moveWindowToVirtualDesktop(
   windowHandle: number,
   requestedName: string
@@ -671,11 +712,42 @@ export async function moveWindowToVirtualDesktop(
       };
     }
 
-    // Use wmctrl to move window to desktop (0-based index for wmctrl -t)
-    execSync(
-      `wmctrl -i -r ${windowHandle} -t ${resolved.desktop.index}`,
-      { encoding: "utf-8", timeout: 5000 }
-    );
+    let moved = false;
+
+    // Try wmctrl first (X11)
+    try {
+      execSync(
+        `wmctrl -i -r ${windowHandle} -t ${resolved.desktop.index}`,
+        { encoding: "utf-8", timeout: 5000 }
+      );
+      moved = true;
+    } catch {
+      // wmctrl failed — try kdotool on Wayland
+    }
+
+    if (!moved && hasKdotool()) {
+      const kdotoolHandle = findKdotoolHandleByPid(windowHandle);
+      if (!kdotoolHandle) {
+        return {
+          success: false,
+          handle: windowHandle,
+          error: `wmctrl failed and kdotool could not find window for PID ${windowHandle}`,
+        };
+      }
+      execSync(
+        `"${getKdotoolPath()}" set_desktop_for_window ${kdotoolHandle} ${resolved.desktop.index}`,
+        { encoding: "utf-8", timeout: 5000 }
+      );
+      moved = true;
+    }
+
+    if (!moved) {
+      return {
+        success: false,
+        handle: windowHandle,
+        error: "No window management tool available (wmctrl or kdotool)",
+      };
+    }
 
     await new Promise((resolve) => setTimeout(resolve, 250));
 
@@ -724,8 +796,10 @@ export async function getWindowDesktopAssignments(
     const results: WindowDesktopInfo[] = [];
 
     for (const handle of normalizedHandles) {
+      let found = false;
+
+      // Try wmctrl first (X11)
       try {
-        // Use wmctrl -l to get desktop index for window
         const output = execSync("wmctrl -l", { encoding: "utf-8", timeout: 5000 });
         const lines = output.split("\n").map((l) => l.trim()).filter(Boolean);
 
@@ -744,10 +818,35 @@ export async function getWindowDesktopAssignments(
               isCurrentDesktop: desktop.name === currentDesktop?.name,
             });
           }
+          found = true;
           break;
         }
       } catch {
-        // Ignore per-window errors
+        // wmctrl failed
+      }
+
+      // Try kdotool fallback (Wayland)
+      if (!found && hasKdotool()) {
+        try {
+          const kdotoolHandle = findKdotoolHandleByPid(handle);
+          if (kdotoolHandle) {
+            const desktopIndexStr = execSync(
+              `"${getKdotoolPath()}" get_desktop_for_window ${kdotoolHandle}`,
+              { encoding: "utf-8", timeout: 2000 }
+            ).trim();
+            const desktopIndex = parseInt(desktopIndexStr, 10);
+            const desktop = desktops.find((d) => d.index === desktopIndex);
+            if (desktop) {
+              results.push({
+                handle,
+                desktop: desktop.name,
+                isCurrentDesktop: desktop.name === currentDesktop?.name,
+              });
+            }
+          }
+        } catch {
+          // Ignore per-window errors
+        }
       }
     }
 

@@ -55,4 +55,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.removeAllListeners("script-output");
     ipcRenderer.removeAllListeners("script-status-changed");
   },
+
+  // Portainer proxy (bypasses renderer self-signed cert restrictions)
+  portainerFetch: (method: string, url: string, body?: string) =>
+    ipcRenderer.invoke("portainer-fetch", method, url, body),
 });
