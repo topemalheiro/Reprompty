@@ -43,14 +43,25 @@ function getDefaultScriptPath(): string {
   if (IS_WINDOWS) {
     return "C:\\Users\\topem\\scripts\\VSCodeSidePanelLayout\\VSCodeSidePanelLayout.ps1";
   }
-  // Linux: use the Python layout script inside the repo
-  // Try multiple strategies to find the repo root regardless of cwd
+  // Linux: prefer the Cython-compiled binary, fall back to Python script
+  const clientCandidates = [
+    path.join(__dirname, "..", "..", "VSCodeSidePanelLayout", "reprompty-layout-cython"),
+    path.join(__dirname, "..", "..", "..", "VSCodeSidePanelLayout", "reprompty-layout-cython"),
+    "/home/tope/Projects/OS-Toolkit/Reprompty/VSCodeSidePanelLayout/reprompty-layout-cython",
+  ];
+  for (const candidate of clientCandidates) {
+    try {
+      if (fs.existsSync(candidate)) {
+        return candidate;
+      }
+    } catch {
+      // Continue
+    }
+  }
+  // Fall back to Python script
   const candidates = [
-    // Derive from __dirname (dist/core/ -> repo root)
     path.join(__dirname, "..", "..", "VSCodeSidePanelLayout", "linux_layout.py"),
-    // When running from reprompty/ subdirectory
     path.join(__dirname, "..", "..", "..", "VSCodeSidePanelLayout", "linux_layout.py"),
-    // Absolute fallback for this specific machine
     "/home/tope/Projects/OS-Toolkit/Reprompty/VSCodeSidePanelLayout/linux_layout.py",
   ];
   for (const candidate of candidates) {
@@ -62,8 +73,7 @@ function getDefaultScriptPath(): string {
       // Continue to next candidate
     }
   }
-  // Last resort: return the most likely path even if it doesn't exist yet
-  return candidates[0];
+  return clientCandidates[0];
 }
 
 const LAYOUT_LOG_DIR_NAME = "VSCodeSidePanelLayout";
@@ -104,7 +114,7 @@ function getDefaultSlots(): Omit<LayoutSlot, "id">[] {
     {
       letter: "A",
       name: "Dual Bottom",
-      scriptArgs: ["--once", "--dual"],
+      scriptArgs: ["--slot", "A"],
       hotkey: "Ctrl+Alt+V",
       windowX: 1360,
       windowY: 1002,
@@ -116,7 +126,7 @@ function getDefaultSlots(): Omit<LayoutSlot, "id">[] {
     {
       letter: "B",
       name: "Top Full Panel",
-      scriptArgs: ["--once", "--single"],
+      scriptArgs: ["--slot", "B"],
       hotkey: "Ctrl+Alt+N",
       windowX: 1360,
       windowY: 0,
@@ -357,8 +367,20 @@ export class LayoutManager {
         };
       } else {
         const isPython = scriptPath.endsWith(".py");
-        command = isPython ? "python3" : "bash";
-        spawnArgs = [scriptPath, ...fullArgs];
+        const isSh = scriptPath.endsWith(".sh");
+        if (!isPython && !isSh) {
+          // Cython-compiled binary: run directly, no --log-path
+          command = scriptPath;
+          spawnArgs = fullArgs.filter((arg, i, arr) => {
+            // Filter out --log-path and its value
+            if (arr[i - 1] === "--log-path") return false;
+            if (arg === "--log-path" || arg === "-LogPath") return false;
+            return true;
+          });
+        } else {
+          command = isPython ? "python3" : "bash";
+          spawnArgs = [scriptPath, ...fullArgs];
+        }
         spawnOptions = {
           stdio: ["ignore", "pipe", "pipe"],
         };
