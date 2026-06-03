@@ -1123,6 +1123,62 @@ def find_vscode_window_list() -> list:
     return results
 
 
+def try_daemon_socket(args: argparse.Namespace) -> Optional[dict]:
+    """Try to send the layout command to the running daemon socket.
+    Returns the daemon's response dict, or None if daemon is not available."""
+    runtime_dir = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
+    socket_path = os.path.join(runtime_dir, "reprompty", "daemon.sock")
+    if not os.path.exists(socket_path):
+        return None
+
+    try:
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.settimeout(3)
+        s.connect(socket_path)
+
+        cmd: dict = {}
+        if args.slot:
+            cmd["slot"] = args.slot
+        if args.dual:
+            cmd["mode"] = "dual"
+        if args.single:
+            cmd["mode"] = "single"
+        if args.window_title:
+            cmd["window_title"] = args.window_title
+        if args.window_handle:
+            cmd["window_handle"] = args.window_handle
+        if args.panel_left:
+            cmd["panel_side"] = "left"
+        elif args.panel_right:
+            cmd["panel_side"] = "right"
+        if args.x is not None:
+            cmd["x"] = args.x
+        if args.y is not None:
+            cmd["y"] = args.y
+        if args.width is not None:
+            cmd["width"] = args.width
+        if args.height is not None:
+            cmd["height"] = args.height
+        if args.panel_width is not None:
+            cmd["panel_width"] = args.panel_width
+
+        s.sendall((json.dumps(cmd) + "\n").encode())
+
+        data = b""
+        while b"\n" not in data:
+            chunk = s.recv(4096)
+            if not chunk:
+                break
+            data += chunk
+
+        s.close()
+        if data:
+            return json.loads(data.decode().strip())
+    except Exception:
+        pass
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser(description="VS Code: Linux Layout")
     parser.add_argument("--once", action="store_true", help="Run once and exit")
@@ -1146,6 +1202,12 @@ def main():
     if args.daemon:
         daemon_main()
         return
+
+    # Try daemon socket first for instant, serialized execution
+    daemon_resp = try_daemon_socket(args)
+    if daemon_resp is not None:
+        print(json.dumps(daemon_resp))
+        sys.exit(0 if daemon_resp.get("ok") else 1)
 
     result = run_layout(args)
     if result.get("ok"):
