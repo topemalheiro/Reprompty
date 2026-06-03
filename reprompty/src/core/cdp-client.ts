@@ -110,7 +110,7 @@ export function mapTargetUrlToAgent(url?: string | null): AgentKind {
   if (normalized.includes("extensionid=kilocode.kilo-code")) {
     return "kilo-code";
   }
-  if (normalized.includes("extensionid=kimicode.kimi-code")) {
+  if (normalized.includes("extensionid=kimicode.kimi-code") || normalized.includes("extensionid=moonshot-ai.kimi-code")) {
     return "kimi-code";
   }
   return "unknown";
