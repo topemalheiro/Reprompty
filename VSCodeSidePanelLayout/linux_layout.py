@@ -497,18 +497,15 @@ def move_window(wid: str, x: int, y: int, width: int, height: int, log_file: Opt
         try:
             # KDE 6: windowsize requires the window to be active first, but
             # windowmove must happen BEFORE activation to avoid desktop-switch drift.
+            # Chain move + activate + resize in a single kdotool invocation
+            # so KWin applies them atomically — no visible "middle point"
             subprocess.run(
-                [KDOTOOL_PATH, "windowmove", wid, str(x), str(y)],
-                capture_output=True, timeout=5,
-            )
-            time.sleep(0.05)
-            subprocess.run(
-                [KDOTOOL_PATH, "windowactivate", wid],
-                capture_output=True, timeout=5,
-            )
-            time.sleep(0.05)
-            subprocess.run(
-                [KDOTOOL_PATH, "windowsize", wid, str(width), str(height)],
+                [
+                    KDOTOOL_PATH,
+                    "windowmove", wid, str(x), str(y),
+                    "windowactivate", wid,
+                    "windowsize", wid, str(width), str(height),
+                ],
                 capture_output=True, timeout=5,
             )
             log(f"Moved window {wid} to {x},{y} size {width}x{height}", log_file)
