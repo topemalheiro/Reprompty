@@ -60,7 +60,7 @@ function hasKdotool(): boolean {
 function listWindowsKdotool(): Array<{ pid: number; title: string; processName: string; handle: string }> {
   const kdotoolPath = getKdotoolPath();
   const results: Array<{ pid: number; title: string; processName: string; handle: string }> = [];
-  const seen = new Set<number>();
+  const seenHandles = new Set<string>();
 
   for (const term of EDITOR_TITLE_SUBSTRINGS) {
     try {
@@ -72,6 +72,11 @@ function listWindowsKdotool(): Array<{ pid: number; title: string; processName: 
       const lines = output.split("\n").map((l) => l.trim()).filter((l) => l.startsWith("{"));
       for (const handleStr of lines) {
         try {
+          if (seenHandles.has(handleStr)) {
+            continue;
+          }
+          seenHandles.add(handleStr);
+
           const title = execSync(
             `"${kdotoolPath}" getwindowname ${handleStr}`,
             { encoding: "utf-8", timeout: 2000 }
@@ -92,12 +97,8 @@ function listWindowsKdotool(): Array<{ pid: number; title: string; processName: 
             pid = 0;
           }
 
-          if (pid && seen.has(pid)) {
-            continue;
-          }
-          if (pid) {
-            seen.add(pid);
-          }
+          // Intentionally not deduping by PID here: a single process may own
+          // multiple editor windows (e.g. VS Code: with multiple folders open).
 
           let processName = "";
           if (pid) {
@@ -795,9 +796,10 @@ export async function detectWindows(): Promise<DetectedWindow[]> {
   // KDE Wayland kdotool path: when wmctrl found no editor windows, try kdotool
   if (results.length === 0 && hasKdotool()) {
     const kdotoolWindows = listWindowsKdotool();
+    const seenKdotoolHandles = new Set<string>();
     for (const win of kdotoolWindows) {
-      if (seen.has(win.pid)) continue;
-      seen.add(win.pid);
+      if (seenKdotoolHandles.has(win.handle)) continue;
+      seenKdotoolHandles.add(win.handle);
 
       const titleMatch = win.title.match(/^(.+?)\s+-\s+(Visual Studio Code|Kilo Code|Kimi Code|VSCodium|Code: - OSS)/);
       const folderPath = titleMatch ? titleMatch[1].trim() : "";
@@ -936,40 +938,9 @@ export interface AllWindowInfo {
 export function detectAllWindows(): AllWindowInfo[] {
   const windows: AllWindowInfo[] = [];
 
-  try {
-    const output = execSync("wmctrl -l -p", { encoding: "utf-8", timeout: 10000 });
-    const lines = output.split("\n").map((l) => l.trim()).filter(Boolean);
-
-    for (const line of lines) {
-      const parts = line.split(/\s+/);
-      if (parts.length < 4) continue;
-
-      const handle = parseInt(parts[0], 16);
-      const pid = parseInt(parts[2], 10);
-      const title = parts.slice(3).join(" ");
-
-      if (!title.trim()) continue;
-
-      let processName = "";
-      try {
-        processName = execSync(`ps -p ${pid} -o comm=`, { encoding: "utf-8", timeout: 2000 }).trim();
-      } catch {
-        processName = "";
-      }
-
-      windows.push({
-        handle,
-        pid,
-        title,
-        processName: processName || "unknown",
-      });
-    }
-  } catch {
-    // wmctrl failed
-  }
-
-  // Wayland fallback: use kdotool to list real windows
-  if (windows.length === 0 && isWaylandSession() && hasKdotool()) {
+  // On KDE Wayland, kdotool is the only reliable source for native windows.
+  // Use it as primary when available.
+  if (hasKdotool()) {
     try {
       const kdotoolPath = getKdotoolPath();
       const output = execSync(
@@ -1023,11 +994,46 @@ export function detectAllWindows(): AllWindowInfo[] {
         });
       }
     } catch (err) {
-      console.error("[detectAllWindows] kdotool fallback error:", err);
+      console.error("[detectAllWindows] kdotool error:", err);
     }
   }
 
-  // Final fallback: process listing if kdotool is unavailable
+  // Fallback to wmctrl for X11 / XWayland windows kdotool may have missed
+  if (windows.length === 0) {
+    try {
+      const output = execSync("wmctrl -l -p", { encoding: "utf-8", timeout: 10000 });
+      const lines = output.split("\n").map((l) => l.trim()).filter(Boolean);
+
+      for (const line of lines) {
+        const parts = line.split(/\s+/);
+        if (parts.length < 4) continue;
+
+        const handle = parseInt(parts[0], 16);
+        const pid = parseInt(parts[2], 10);
+        const title = parts.slice(3).join(" ");
+
+        if (!title.trim()) continue;
+
+        let processName = "";
+        try {
+          processName = execSync(`ps -p ${pid} -o comm=`, { encoding: "utf-8", timeout: 2000 }).trim();
+        } catch {
+          processName = "";
+        }
+
+        windows.push({
+          handle,
+          pid,
+          title,
+          processName: processName || "unknown",
+        });
+      }
+    } catch {
+      // wmctrl failed
+    }
+  }
+
+  // Final fallback: process listing if neither kdotool nor wmctrl worked
   if (windows.length === 0 && isWaylandSession()) {
     try {
       const psOutput = execSync("ps -eo pid,comm,args", { encoding: "utf-8", timeout: 5000 });
