@@ -537,9 +537,10 @@ msg_file="${msgFile}"
 message=$(cat "$msg_file")
 rm -f "$msg_file"
 
-# Copy to clipboard (wl-copy for Wayland)
+# Copy to clipboard (wl-copy for Wayland) — use setsid so wl-copy's background fork
+# doesn't keep our process group alive and cause execSync to hang.
 if command -v wl-copy >/dev/null 2>&1; then
-  echo -n "$message" | wl-copy
+  echo -n "$message" | setsid wl-copy &>/dev/null
 else
   echo "wl-copy not available" >&2
   exit 1
@@ -550,21 +551,27 @@ ${kdotoolHandle ? `"${kdotoolPath}" windowactivate ${kdotoolHandle}` : "# kdotoo
 ${kdotoolHandle ? "sleep 0.15" : "# skipping focus wait"}
 
 # Paste and send — prefer wtype (no daemon), fall back to ydotool
+wtype_ok=false
 if command -v wtype >/dev/null 2>&1; then
-  wtype -M ctrl -k v -m ctrl
-  sleep 0.1
-  wtype -k Return
-elif command -v ydotool >/dev/null 2>&1; then
+  if wtype -M ctrl -k v -m ctrl 2>/dev/null; then
+    sleep 0.1
+    if wtype -k Return 2>/dev/null; then
+      wtype_ok=true
+    fi
+  fi
+fi
+
+if [ "$wtype_ok" != "true" ] && command -v ydotool >/dev/null 2>&1; then
   # Ensure ydotoold socket is available; start if needed
-  if [ ! -S /run/user/$(id - u)/ydotoold_socket ]; then
-    ydotoold --socket-path=/run/user/$(id - u)/ydotoold_socket --socket-own=$(id - u):$(id - g) &
+  if [ ! -S /run/user/$(id -u)/ydotoold_socket ]; then
+    ydotoold --socket-path=/run/user/$(id -u)/ydotoold_socket --socket-own=$(id -u):$(id -g) &
     sleep 0.5
   fi
-  export YDOTOOL_SOCKET=/run/user/$(id - u)/ydotoold_socket
+  export YDOTOOL_SOCKET=/run/user/$(id -u)/ydotoold_socket
   ydotool key 29:1 47:1 47:0 29:0
   sleep 0.1
   ydotool key 28:1 28:0
-else
+elif [ "$wtype_ok" != "true" ]; then
   echo "No typing tool available (wtype or ydotool)" >&2
   exit 1
 fi
