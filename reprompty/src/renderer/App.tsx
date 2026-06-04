@@ -16,6 +16,8 @@ interface DetectedWindow {
   backgroundRoute: "ipc-kilo" | "cdp-kilo" | "cdp-claude" | "cdp-codex" | "cdp-kimi" | "foreground";
   pipePath: string | null;
   sendMethod: "background" | "foreground";
+  /** KDE Wayland kdotool UUID handle (if available) */
+  kdotoolHandle?: string;
 }
 
 interface SpawnTarget {
@@ -230,7 +232,8 @@ function App() {
     }
 
     const targetWindow = detectedWindows.find(
-      (windowInfo) => String(windowInfo.handle) === selectedWindowHandle
+      (windowInfo) =>
+        String(windowInfo.kdotoolHandle || windowInfo.handle) === selectedWindowHandle
     );
     if (!targetWindow) {
       setStatus("Window not found. It may have closed.");
@@ -375,6 +378,9 @@ function App() {
     if (agent === "codex") {
       return { label: "Codex", bg: "#0078d4" };
     }
+    if (agent === "kimi-code") {
+      return { label: "Kimi", bg: "#7c3aed" };
+    }
     return { label: "?", bg: "#666" };
   };
 
@@ -457,7 +463,7 @@ function App() {
                 const agent = agentBadge(windowInfo.activeAgent);
                 const method = methodBadge(windowInfo.backgroundRoute);
                 return (
-                  <div key={windowInfo.handle} style={styles.card}>
+                  <div key={windowInfo.kdotoolHandle || windowInfo.handle} style={styles.card}>
                     <div style={{ flex: 1 }}>
                       <strong style={{ color: "#fff" }}>{formatTitle(windowInfo)}</strong>
                       <div
@@ -516,7 +522,7 @@ function App() {
                     : "?";
                 const method = windowInfo.backgroundRoute === "foreground" ? "FG" : "BG";
                 return (
-                  <option key={windowInfo.handle} value={String(windowInfo.handle)}>
+                  <option key={windowInfo.kdotoolHandle || windowInfo.handle} value={String(windowInfo.kdotoolHandle || windowInfo.handle)}>
                     {formatTitle(windowInfo)} ({agent}) [{method}]
                     {windowInfo.desktop ? ` <Desktop ${windowInfo.desktop}>` : ""}
                   </option>
