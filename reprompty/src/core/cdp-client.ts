@@ -478,7 +478,7 @@ function getSendScript(agent: Exclude<AgentKind, "unknown">, message: string) {
     };
   }
 
-  if (agent === "kilo-code" || agent === "kimi-code") {
+  if (agent === "kilo-code") {
     return {
       inject: `
       (() => {
@@ -525,6 +525,68 @@ function getSendScript(agent: Exclude<AgentKind, "unknown">, message: string) {
     };
   }
 
+  if (agent === "kimi-code") {
+    return {
+      inject: `
+      (() => {
+        var iframe = document.querySelector('iframe');
+        if (!iframe) return 'no_iframe';
+        var doc = iframe.contentDocument;
+        if (!doc) return 'no_contentDocument';
+        var input = doc.querySelector('textarea');
+        if (!input) input = doc.querySelector('[role="textbox"]');
+        if (!input) input = doc.querySelector('div[contenteditable="true"]');
+        if (!input) return 'input_not_found';
+        var setValue = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set;
+        input.focus();
+        if (setValue && input.tagName === 'TEXTAREA') {
+          setValue.call(input, ${escapedMessage});
+        } else if (input.isContentEditable) {
+          input.innerHTML = '<p>' + ${escapedMessage}.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</p>';
+        } else {
+          input.textContent = ${escapedMessage};
+        }
+        input.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, data: ${escapedMessage}, inputType: 'insertText' }));
+        input.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, data: ${escapedMessage}, inputType: 'insertText' }));
+        input.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+        return 'injected';
+      })()
+      `,
+      submit: `
+      (() => {
+        var iframe = document.querySelector('iframe');
+        if (!iframe) return 'no_iframe';
+        var doc = iframe.contentDocument;
+        var input = doc.querySelector('textarea');
+        if (!input) input = doc.querySelector('[role="textbox"]');
+        if (!input) input = doc.querySelector('div[contenteditable="true"]');
+        if (!input) return 'no_input';
+        // Strategy 1: walk up from textarea to find the nearest ancestor with buttons,
+        // then click the first non-disabled button (Kimi's send button is icon-only).
+        var container = input.parentElement;
+        var sendButton = null;
+        while (container && container !== doc.body) {
+          var buttons = Array.from(container.querySelectorAll('button'));
+          if (buttons.length > 0) {
+            sendButton = buttons.find(function (button) { return !button.disabled; });
+            if (sendButton) break;
+          }
+          container = container.parentElement;
+        }
+        if (sendButton) {
+          sendButton.click();
+          return 'sent_button';
+        }
+        // Strategy 2: plain Enter key
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+        input.dispatchEvent(new KeyboardEvent('keypress', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+        input.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+        return 'sent_enter';
+      })()
+      `
+    };
+  }
+
   return null;
 }
 
@@ -553,7 +615,7 @@ async function sendIntoAgentTarget(
 
       const submitResult = await cdpEvaluate(ws, scripts.submit, 2);
       const submitValue = getEvaluationValue(submitResult);
-      if (submitValue === "sent") {
+      if (submitValue === "sent" || submitValue === "sent_button" || submitValue === "sent_enter") {
         return { success: true };
       }
 
