@@ -561,23 +561,8 @@ function getSendScript(agent: Exclude<AgentKind, "unknown">, message: string) {
         if (!input) input = doc.querySelector('[role="textbox"]');
         if (!input) input = doc.querySelector('div[contenteditable="true"]');
         if (!input) return 'no_input';
-        // Strategy 1: walk up from textarea to find the nearest ancestor with buttons,
-        // then click the first non-disabled button (Kimi's send button is icon-only).
-        var container = input.parentElement;
-        var sendButton = null;
-        while (container && container !== doc.body) {
-          var buttons = Array.from(container.querySelectorAll('button'));
-          if (buttons.length > 0) {
-            sendButton = buttons.find(function (button) { return !button.disabled; });
-            if (sendButton) break;
-          }
-          container = container.parentElement;
-        }
-        if (sendButton) {
-          sendButton.click();
-          return 'sent_button';
-        }
-        // Strategy 2: plain Enter key
+        // Kimi Code: uses React; synthetic button clicks do not trigger its onClick.
+        // Dispatch Enter key events on the textarea instead — this is what actually works.
         input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
         input.dispatchEvent(new KeyboardEvent('keypress', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
         input.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
