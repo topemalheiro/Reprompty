@@ -2,458 +2,357 @@
 
 ## Overview
 
-Reprompty is an AI agent orchestration framework that enables multi-window prompt engineering, task automation, and agent team coordination. Built with Bun + Electron + Vite for cross-platform development.
+Reprompty is an AI agent orchestration framework for Linux (KDE Wayland) that enables multi-window prompt engineering, virtual desktop management, layout automation, and agent team coordination. Built with Electron + Vite.
+
+## Platform
+
+**Primary platform: Linux (KDE Plasma Wayland)**
+
+Window detection uses `kdotool` for native Wayland windows. `wmctrl` is used as fallback for XWayland windows. Layout positioning uses `kdotool` (Wayland) or `xdotool` (X11).
 
 ## Architecture
 
-```mermaid
-graph TD
-    A[Skill/Agent] --> B[Reprompty MCP]
-    B --> C[Connection Manager]
-    C --> D[VS Code Window]
-    C --> E[CLI Connection]
-    C --> F[Custom API]
-    D --> G[Claude Code]
-    E --> G
-    F --> G
+```
+Agent (Kilo/Kimi/Codex) → Reprompty MCP Server → Platform Layer → VS Code: Windows
+                                                    ↓
+                                            Virtual Desktops (KWin)
+                                                    ↓
+                                              Layout Engine
 ```
 
-## Connection Types
+## MCP Server Setup
 
-### 1. VS Code Window (Extension)
-- Connects to VS Code window via extension
-- Sends prompts in foreground or background
-- Uses clipboard + SendKeys or extension IPC
+### Standalone Server
 
-### 2. CLI Connection
-- Uses `code --folder-uri` for spawning windows
-- Spawns new VS Code instances
-- Good for batch operations
+```bash
+# Build the MCP server
+npm run build:mcp
 
-### 3. Custom API
-- HTTP/WebSocket API connections
-- For connecting to external AI services
-- Extensible for new connection types
+# Run it
+node dist/mcp/server.js
+```
 
-## Connection Management
+### Kilo Code: Configuration
 
-Similar to Auto Claude MCP, connections are stored in a connection pool and can be added/removed dynamically.
+Add to `~/.config/Code/User/globalStorage/kilocode.kilo-code/settings/mcp_settings.json`:
 
-### Connection Types
-
-```typescript
-type ConnectionType = 'vscode-window' | 'vscode-cli' | 'http-api' | 'websocket';
-
-interface Connection {
-  id: string;
-  type: ConnectionType;
-  name: string;
-  config: VSCodeWindowConfig | VSCodeCLIConfig | HTTPAPIConfig | WebSocketConfig;
-  status: 'active' | 'inactive' | 'error';
-  createdAt: string;
-}
-
-interface VSCodeWindowConfig {
-  windowTitle: string;
-  method: 'foreground' | 'background'; // foreground uses clipboard+SendKeys, background uses extension IPC
-}
-
-interface VSCodeCLIConfig {
-  folderPath: string;
-  args?: string[];
-}
-
-interface HTTPAPIConfig {
-  url: string;
-  headers?: Record<string, string>;
-  auth?: {
-    type: 'bearer' | 'basic';
-    token: string;
-  };
-}
-
-interface WebSocketConfig {
-  url: string;
-  protocols?: string[];
+```json
+{
+  "mcpServers": {
+    "reprompty": {
+      "command": "node",
+      "args": [
+        "/home/tope/Projects/OS-Toolkit/Reprompty/reprompty/dist/mcp/server.js"
+      ],
+      "disabled": false,
+      "autoApprove": [
+        "spawn_window",
+        "send_prompt",
+        "detect_windows",
+        "apply_layout"
+      ]
+    }
+  }
 }
 ```
+
+### Codex Configuration
+
+Add to VS Code: `settings.json`:
+
+```json
+{
+  "chatgpt.mcpServers": {
+    "reprompty": {
+      "command": "node",
+      "args": [
+        "/home/tope/Projects/OS-Toolkit/Reprompty/reprompty/dist/mcp/server.js"
+      ]
+    }
+  }
+}
+```
+
+### Kimi Code: Workaround
+
+Kimi Code: does not yet support MCP. Use Reprompty's **Send Prompt** UI tab to send prompts to Kimi windows, or route through Kilo/Codex which have MCP enabled.
+
+---
 
 ## MCP Tools
 
-### list_spawn_targets
-List saved spawn target aliases for VS Code folders.
+### Window Detection
+
+#### `detect_windows`
+Auto-detect all VS Code: / Kilo Code: / Kimi Code: / Claude Code: / Codex windows with their PIDs, handles, active agents, virtual desktops, and available background routes.
 
 ```typescript
+// No parameters
+// Returns: Array<{
+//   pid: number;
+//   handle: number;
+//   title: string;
+//   folderPath: string;
+//   processName: string;
+//   desktop?: string;
+//   isCurrentDesktop?: boolean;
+//   extension: "kilo-code" | "claude-code" | "codex" | "kimi-code" | "unknown";
+//   activeAgent: same;
+//   availableAgents: string[];
+//   backgroundRoute: "ipc-kilo" | "cdp-kilo" | "cdp-claude" | "cdp-codex" | "cdp-kimi" | "foreground";
+//   sendMethod: "background" | "foreground";
+// }>
+```
+
+#### `detect_all_windows`
+Detect ALL visible windows on the desktop (browsers, terminals, editors, etc.).
+
+```typescript
+// No parameters
+```
+
+#### `check_cdp`
+Check if Chrome DevTools Protocol is available for background sending.
+
+```typescript
+// No parameters
+// Returns: { available: boolean; port: number; agentWebview: boolean }
+```
+
+---
+
+### Window Spawning
+
+#### `spawn_window`
+Spawn a new VS Code: window from a saved target alias or raw folder path.
+
+```typescript
+// Option 1: by saved target alias
+{ target: string; windowName?: string; desktop?: string; createDesktop?: boolean; activateDesktop?: boolean }
+
+// Option 2: by raw folder path
+{ folderPath: string; windowName?: string; desktop?: string; createDesktop?: boolean; activateDesktop?: boolean }
+```
+
+**Desktop behavior:**
+- `desktop`: explicit desktop name. Created if missing.
+- `createDesktop: true`: auto-create a desktop named from target label or folder basename.
+- `activateDesktop: true`: **switch to target desktop BEFORE spawning** (old behavior).
+- Default (`activateDesktop: false`): spawn on current desktop, then move window to target desktop after detection.
+
+#### `spawn_and_layout`
+Spawn + apply layout in one call.
+
+```typescript
+{ target?: string; folderPath?: string; slot: string; windowName?: string; desktop?: string; createDesktop?: boolean; activateDesktop?: boolean }
+```
+
+`slot` is required — use `"A"`, `"B"`, or a named slot.
+
+#### `list_spawn_targets`
+List saved spawn target aliases.
+
+```typescript
+// No parameters
 // Returns: Array<{ id: string; label: string; folderPath: string; windowName?: string; desktop?: string }>
 ```
 
-### list_virtual_desktops
-List Windows virtual desktops and indicate which one is current.
+---
+
+### Virtual Desktops
+
+#### `list_virtual_desktops`
+List all KDE virtual desktops with index, name, and current status.
 
 ```typescript
+// No parameters
 // Returns: Array<{ index: number; name: string; isCurrent: boolean }>
 ```
 
-### ensure_virtual_desktop
-Create a named Windows virtual desktop if it does not already exist, without switching to it.
+#### `ensure_virtual_desktop`
+Create a named desktop if it does not exist. Does NOT switch to it.
 
 ```typescript
-interface EnsureVirtualDesktopParams {
-  name: string;
-}
+{ name: string }
+// Returns: { success: boolean; created: boolean; desktop?: { index, name, isCurrent }; error?: string }
 ```
 
-### rename_virtual_desktop
-Rename a Windows virtual desktop by exact name.
+#### `rename_virtual_desktop`
+Rename an existing desktop by exact name.
 
 ```typescript
-interface RenameVirtualDesktopParams {
-  currentName: string;
-  newName: string;
-}
+{ currentName: string; newName: string }
 ```
 
-### spawn_window
-Spawn a new VS Code window using a saved target alias or a raw project folder.
+---
+
+### Layout
+
+#### `apply_layout`
+Apply a saved layout slot to position/resize a VS Code: window.
 
 ```typescript
-type SpawnWindowParams =
-  | { target: string; windowName?: string; desktop?: string; createDesktop?: boolean; activateDesktop?: boolean }
-  | { folderPath: string; windowName?: string; desktop?: string; createDesktop?: boolean; activateDesktop?: boolean };
+{ slot: string; windowHandle?: number; windowTitle?: string }
 ```
 
-If `desktop` is supplied and missing, Reprompty creates it and targets that desktop for the spawn. If `createDesktop: true` is supplied without an explicit `desktop`, Reprompty creates a fresh desktop named from the saved target label first, otherwise the folder basename. Desktop-aware spawns stay on the current desktop by default and only switch when `activateDesktop: true` is supplied.
+`windowHandle` is preferred when available (exact target). `windowTitle` is fallback.
 
-### spawn_and_layout
-Spawn a VS Code window and apply a layout slot in one call.
+#### `list_layout_slots`
+List all configured layout slots.
 
 ```typescript
-type SpawnAndLayoutParams =
-  | { target: string; slot: string; desktop?: string; createDesktop?: boolean; activateDesktop?: boolean }
-  | { folderPath: string; slot: string; desktop?: string; createDesktop?: boolean; activateDesktop?: boolean };
+// No parameters
+// Returns: Array<{ id: string; letter?: string; name: string; windowX, windowY, windowWidth, windowHeight, panelWidth, monitorHint }>
 ```
 
-Reprompty now isolates the spawned window by new handle first and only falls back to a unique title match. If it cannot identify one safe target, the tool fails instead of moving the wrong editor window.
-Desktop-aware spawns stay on the current desktop by default: Reprompty spawns, isolates the new handle, moves it to the target desktop, and then applies layout by handle. Pass `activateDesktop: true` only when you explicitly want the old switch-first behavior.
+Default Linux slots:
+- **Slot A** (Dual Bottom): spans two adjacent monitors, panel on left monitor
+- **Slot B** (Top Full Panel): fills one monitor, panel at half width
 
-### apply_layout
-Apply a saved layout slot to an existing VS Code window.
+---
+
+### Prompt Sending
+
+#### `send_prompt`
+Send a prompt to a saved connection.
 
 ```typescript
-interface ApplyLayoutParams {
-  slot: string;
-  windowHandle?: number;
-  windowTitle?: string;
-}
+{ connectionId: string; prompt: string; waitForResponse?: boolean; timeout?: number }
 ```
 
-`windowHandle` is preferred when available because it targets one exact window.
+**Background routes by agent:**
+- **Kilo Code:** → IPC socket (fastest, no window focus)
+- **Kimi Code:** → CDP inject + Enter key simulation
+- **Claude Code:** → CDP inject + Enter key simulation
+- **Codex:** → CDP inject + Enter key simulation
 
-### send_prompt
-Send a prompt to a specific connection.
+If background fails, falls back to foreground (clipboard + key simulation).
+
+#### `add_connection`
+Add a connection to the pool.
 
 ```typescript
-interface SendPromptParams {
-  connectionId: string;
-  prompt: string;
-  waitForResponse?: boolean;
-  timeout?: number;
-}
+{ type: "vscode-window" | "vscode-cli" | "http-api" | "websocket"; name: string; config: { socketPath?: string; windowTitle?: string; method?: "foreground" | "background"; folderPath?: string; url?: string } }
 ```
 
-### add_connection
-Add a new connection to the connection pool.
+For VS Code: windows, `method: "background"` uses CDP (no focus). `method: "foreground"` uses clipboard + key simulation.
+
+#### `list_connections`
+List all connections.
+
+#### `remove_connection`
+Remove a connection.
 
 ```typescript
-interface AddConnectionParams {
-  type: ConnectionType;
-  name: string;
-  config: VSCodeWindowConfig | VSCodeCLIConfig | HTTPAPIConfig | WebSocketConfig;
-}
+{ connectionId: string }
 ```
 
-### list_connections
-List all available connections.
+#### `daisy_chain`
+Chain prompts across multiple connections.
 
 ```typescript
-// Returns: Connection[]
+{ prompts: Array<{ connectionId: string; prompt: string }>; continueOnError?: boolean }
 ```
 
-### remove_connection
-Remove a connection from the pool.
+---
+
+### Scripts
+
+#### `list_scripts`
+List registered scripts.
+
+#### `run_script`
+Run a script by ID.
 
 ```typescript
-interface RemoveConnectionParams {
-  connectionId: string;
-}
+{ scriptId: string }
 ```
 
-### daisy_chain
-Chain multiple prompts across connections.
+#### `stop_script`
+Stop a running script.
 
 ```typescript
-interface DaisyChainParams {
-  prompts: Array<{
-    connectionId: string;
-    prompt: string;
-  }>;
-  continueOnError?: boolean;
-}
+{ scriptId: string }
 ```
 
-### Script-Defined MCP Tools (Layout Presets)
-Scripts can expose first-class MCP tools via portable `reprompty-mcp:` header lines (recommended) or via the Reprompty Scripts tab UI.
+Scripts with `reprompty-mcp:` headers in their first 40 lines are auto-registered as MCP tools.
 
-Header example (PowerShell):
+---
 
-```powershell
-# reprompty-mcp: {"toolName":"dual_monitor_layout_bottom","label":"Dual monitor layout (bottom)","description":"Run the Ctrl+Alt+V dual monitor bottom layout","args":["-Once"]}
-# reprompty-mcp: {"toolName":"top_monitors_layout_panel_full","label":"Top monitors layout (panel full)","description":"Run the Ctrl+Alt+N top monitors panel-full layout","args":["-SingleOnce"]}
-param(...)
-```
+### Script-Generated Tools
 
-Built-in layout calls automatically pass `-WindowHandle` and `-LogPath` to compatible scripts, so one-shot layout runs can target the exact VS Code window and leave behind a transcript.
+These are dynamically registered from scripts:
 
-## Layout Logs
+- `dual_monitor_layout_bottom` — Run the dual-monitor bottom layout
+- `top_monitors_layout_panel_full` — Run the top-monitors panel-full layout
 
-- Reprompty app log: `%USERPROFILE%\\reprompty-logs\\reprompty-YYYY-MM-DD.log`
-- One-shot layout transcript: `%LOCALAPPDATA%\\VSCodeSidePanelLayout\\layout-run-<timestamp>.log`
-- CDP repair log: `%LOCALAPPDATA%\\VSCodeSidePanelLayout\\repair.log`
+---
 
-## Virtual Desktop Notes
+## Example Workflows
 
-- Desktop names are the public contract for MCP and UI, not numeric indices
-- Desktop names refresh from backend polling, so the Windows tab updates after rename
-- `ensure_virtual_desktop` is intentionally non-disruptive and does not switch desktops
-- Spawn flows stay on the current desktop by default and only switch when `activateDesktop: true` is requested
-
-## Aperant /auto-claude-mcp Handoffs
-
-- Use this section only when the user wants to use Aperant or explicitly says to use the `/auto-claude-mcp` skill
-- When that happens, compose the message so the first line is `/auto-claude-mcp`
-- Paste the tool-call chain directly into that prompt for the master agent
-- Tell the agent to first check whether the relevant project tab is already open in Aperant
-- If the project tab already exists, reuse it, skip `open_project`, and do not create a duplicate project tab
-- Do not tell the agent to launch or relaunch Aperant as part of this handoff unless the user explicitly asked for a start/restart
-- Only arm the specific project(s) the user explicitly named
-- Do not infer an extra controller/current project and do not open `Reprompty` or any other project tab unless the user explicitly asked for that separate project
-- Match the chain to the user's wording:
-  - if they say to fully arm Aperant, include the full chain
-  - if they say only certain parts or exclude certain parts, remove the unrelated tool calls
-- Keep the tool calls in this order when included:
-  1. `open_project`
-  2. `associate_project_desktop`
-  3. `assign_window`
-  4. `set_auto_resume_after_rate_limit`
-  5. `set_rdr_enabled`
-
-### Fully Arm Aperant Project Tool Call Chain
-
-```text
-/auto-claude-mcp
-
-First check whether the relevant project tab is already open in Aperant. If it is already open, reuse it and skip `open_project`. Do not relaunch Aperant unless the user explicitly asked for that.
-
-Then fully arm the Aperant project with the following tool calls in order:
-- open_project
-- associate_project_desktop
-- assign_window
-- set_auto_resume_after_rate_limit
-- set_rdr_enabled
-```
-
-### Partial Chain Rule
-
-```text
-If the user says "only", "except", "don't", or otherwise narrows scope, include only the relevant calls from:
-- open_project
-- associate_project_desktop
-- assign_window
-- set_auto_resume_after_rate_limit
-- set_rdr_enabled
-```
-
-## Background Messaging (No Foreground Focus)
-
-Similar to Kilo Code / Roo Code, Reprompty uses **IPC sockets** to send messages in the background without bringing windows to the foreground.
-
-### How It Works
-
-1. **VS Code Extension** runs an IPC server on a Unix socket (or named pipe on Windows)
-2. **Reprompty** connects to that socket using an IPC client
-3. **Messages are sent** directly to the chat - no window focus needed
-
-### Socket Path Discovery
-
-On Windows, sockets are typically at:
-```
-\\.\pipe\kilo-ipc-<pid>
-\\.\pipe\roo-code-ipc-<pid>
-```
-
-The extension listens on `KILO_IPC_SOCKET_PATH` or `ROO_CODE_IPC_SOCKET_PATH` environment variable.
-
-### Foreground vs Background
-
-| Method | Description |
-|--------|-------------|
-| **background** | Uses IPC socket - message appears in chat without focusing window |
-| **foreground** | Uses clipboard + SendKeys - brings window to front (Auto Claude MCP style) |
-
-**Reprompty uses background by default** - this is the key difference from Auto Claude MCP.
-
-## Example Usage (Auto Claude MCP Style)
+### Spawn a project window on a new desktop
 
 ```typescript
-// List saved targets (token-friendly spawn aliases)
-await list_spawn_targets();
-
-// List or prepare desktops
-await list_virtual_desktops();
 await ensure_virtual_desktop({ name: "Aperant-MCP" });
-await rename_virtual_desktop({ currentName: "3", newName: "Focus" });
+await spawn_window({ target: "aperant", desktop: "Aperant-MCP" });
+```
 
-// Spawn a window via target alias on an existing or auto-created desktop
-await spawn_window({ target: "windows-project", desktop: "2" });
+### Spawn + layout in one shot
 
-// Opt into the old switch-first desktop behavior
-await spawn_window({ target: "windows-project", desktop: "2", activateDesktop: true });
+```typescript
+await spawn_and_layout({ target: "voxtype", slot: "A", desktop: "VoxType" });
+```
 
-// Or create a fresh project desktop during spawn
-await spawn_and_layout({ target: "windows-project", slot: "B", createDesktop: true });
+### Send to multiple windows (daisy chain)
 
-// Add a VS Code window connection (background - uses IPC socket)
-await add_connection({
-  type: 'vscode-window',
-  name: 'claude-code-main',
-  config: {
-    socketPath: '\\\\.\\pipe\\kilo-ipc-12345',
-    method: 'background'
-  }
-});
-
-// Add another connection (foreground - uses clipboard + SendKeys)
-await add_connection({
-  type: 'vscode-window',
-  name: 'claude-code-agent',
-  config: {
-    windowTitle: 'Claude Code',
-    method: 'foreground'
-  }
-});
-
-// Send a prompt (appears in chat without focusing window!)
-await send_prompt({
-  connectionId: 'claude-code-main',
-  prompt: 'Create a simple TypeScript function that adds two numbers'
-});
-
-// Daisy chain prompts across multiple windows
+```typescript
 await daisy_chain({
   prompts: [
-    { connectionId: 'claude-code-main', prompt: 'Create a function' },
-    { connectionId: 'claude-code-agent', prompt: 'Add tests for the function' }
+    { connectionId: "kilo-main", prompt: "Refactor the auth module" },
+    { connectionId: "kimi-voxtype", prompt: "Write tests for the auth module" },
   ],
-  continueOnError: true
+  continueOnError: true,
 });
-
-// Call a script-defined MCP tool (no args)
-await dual_monitor_layout_bottom();
 ```
 
-## Platform Abstraction
+### Detect windows and send to a specific one
 
-### Windows Implementation
-- Use PowerShell/Win32 APIs for window management
-- VS Code CLI: `code --folder-uri`
-- Window positioning via Win32 API
-
-### Linux Implementation
-- Use wmctrl/xdotool for window management
-- VS Code CLI: `code --folder-uri`
-- Platform code in `src/platform/windows.ts` / `src/platform/linux.ts`
-
-## Project Structure
-
-```
-reprompty/
-├── src/
-│   ├── main/           # Electron main process
-│   │   ├── index.ts
-│   │   ├── tray.ts     # System tray
-│   │   └── ipc.ts     # IPC handlers
-│   ├── preload/       # Preload scripts
-│   ├── renderer/      # Vite React app
-│   │   ├── App.tsx
-│   │   └── components/
-│   ├── core/          # Platform-agnostic
-│   │   ├── connection-manager.ts
-│   │   ├── prompt-engine.ts
-│   │   └── task-orchestrator.ts
-│   └── platform/      # Platform-specific
-│       ├── windows.ts
-│       └── linux.ts
-├── skills/            # Reprompty skills
-├── connections/      # Connection configs
-├── MCP.md            # MCP server definition
-└── package.json
-```
-
-## Usage
-
-### Adding a Connection
 ```typescript
-// Via MCP tool
-await add_connection({
-  type: 'vscode',
-  name: 'my-vscode',
-  config: {
-    windowTitle: 'Claude Code',
-    method: 'background' // or 'foreground'
-  }
-});
+const windows = JSON.parse(await detect_windows());
+const target = windows.find((w: any) => w.title.includes("VoxType"));
+if (target) {
+  // Add connection dynamically then send
+  await add_connection({
+    type: "vscode-window",
+    name: "voxtype-kimi",
+    config: { windowTitle: target.title, method: "background" }
+  });
+  await send_prompt({ connectionId: "voxtype-kimi", prompt: "Explain this codebase" });
+}
 ```
 
-### Sending a Prompt
-```typescript
-await send_prompt({
-  connectionId: 'my-vscode',
-  prompt: 'Write a hello world in TypeScript'
-});
-```
+---
 
-### Daisy Chaining
-```typescript
-await daisy_chain({
-  prompts: [
-    { connectionId: 'vscode-1', prompt: 'Create a function' },
-    { connectionId: 'vscode-2', prompt: 'Add tests for the function' }
-  ]
-});
-```
+## Logs
 
-## XML Prompt Templates
+- Reprompty app log: `~/reprompty-logs/reprompty-YYYY-MM-DD.log`
+- CDP debug log: `~/reprompty-cdp-debug.log`
+- Layout transcript: `~/.local/share/VSCodeSidePanelLayout/layout-run-<timestamp>.log`
 
-Reprompty supports XML-tagged prompt templates:
+---
 
-```xml
-<task>
-  <context>
-    You are working on a TypeScript project.
-  </context>
-  <goal>
-    Create a new utility function
-  </goal>
-  <constraints>
-    - Must be typed
-    - Must include JSDoc
-  </constraints>
-</task>
-```
+## Agent-Specific Notes
 
-## Future Considerations
+### Kilo Code:
+- Full MCP support via `mcp_settings.json`
+- Background send uses IPC socket when available
+- Falls back to CDP if no socket
 
-- Skill marketplace for sharing prompt templates
-- Multi-agent coordination protocols
-- Result aggregation and synthesis
-- Workflow visualization
+### Kimi Code:
+- No native MCP support (as of current version)
+- Use Reprompty UI or route through Kilo/Codex
+- Background send uses CDP with textarea inject + Enter key
+
+### Codex
+- MCP support via VS Code: settings
+- Background send uses CDP with ProseMirror inject + Enter key
