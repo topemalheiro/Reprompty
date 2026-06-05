@@ -356,3 +356,131 @@ if (target) {
 ### Codex
 - MCP support via VS Code: settings
 - Background send uses CDP with ProseMirror inject + Enter key
+
+---
+
+## Appendix: Full MCP Tool Reference
+
+### `add_connection`
+```json
+{
+  "name": "required string",
+  "type": "vscode-window | vscode-cli | http-api | websocket",
+  "config": {
+    "method": "foreground | background",
+    "windowTitle": "optional string",
+    "folderPath": "optional string",
+    "socketPath": "optional string",
+    "url": "optional string"
+  }
+}
+```
+
+### `remove_connection`
+```json
+{ "connectionId": "required string" }
+```
+
+### `list_connections`
+No params. Returns all connections with IDs and statuses.
+
+### `send_prompt`
+```json
+{
+  "connectionId": "required string",
+  "prompt": "required string",
+  "timeout": "optional number (ms)",
+  "waitForResponse": "optional boolean"
+}
+```
+
+### `daisy_chain`
+```json
+{
+  "prompts": [
+    { "connectionId": "...", "prompt": "..." }
+  ],
+  "continueOnError": "optional boolean"
+}
+```
+
+### `detect_windows`
+No params. Returns all VS Code:/Kimi Code: windows with PIDs and capabilities.
+
+### `check_cdp`
+No params. Returns whether Chrome DevTools Protocol is available for background send.
+
+### `spawn_window`
+```json
+{
+  "target": "optional string (saved alias)",
+  "folderPath": "optional string",
+  "windowName": "optional string",
+  "desktop": "optional string",
+  "activateDesktop": "optional boolean",
+  "createDesktop": "optional boolean"
+}
+```
+
+### `apply_layout`
+```json
+{
+  "slot": "required string (A, B, or slot name)",
+  "windowHandle": "optional number",
+  "windowTitle": "optional string"
+}
+```
+
+### `spawn_and_layout`
+```json
+{
+  "slot": "required string",
+  "target": "optional string",
+  "folderPath": "optional string",
+  "windowName": "optional string",
+  "desktop": "optional string",
+  "activateDesktop": "optional boolean",
+  "createDesktop": "optional boolean"
+}
+```
+
+### `list_layout_slots`
+No params. Returns all layout slots with configurations.
+
+### `dual_monitor_layout_bottom`
+No params. Runs the Ctrl+Alt+V dual monitor bottom layout.
+
+### `top_monitors_layout_panel_full`
+No params. Runs the Ctrl+Alt+N top monitors panel-full layout.
+
+### `list_virtual_desktops`
+No params. Returns all virtual desktops.
+
+### `ensure_virtual_desktop`
+```json
+{ "name": "required string" }
+```
+
+### `rename_virtual_desktop`
+```json
+{
+  "currentName": "required string",
+  "newName": "required string"
+}
+```
+
+### `list_spawn_targets`
+No params. Returns all saved spawn target aliases.
+
+### `list_scripts`
+No params. Returns all registered scripts with status.
+
+### `run_script`
+```json
+{ "scriptId": "required string (name or ID)" }
+```
+
+### `stop_script`
+```json
+{ "scriptId": "required string (name or ID)" }
+```
