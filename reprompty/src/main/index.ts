@@ -662,6 +662,306 @@ electron.ipcMain.handle("portainer-fetch", async (_event: any, method: string, u
   });
 });
 
+// ============================================================================
+// LLAMA.CPP PRESET MANAGEMENT + SERVER CONTROL
+// ============================================================================
+
+import os from "node:os";
+import { spawn, exec } from "node:child_process";
+
+const REPROMPTY_CONFIG_DIR = nodePath.join(os.homedir(), ".config", "reprompty");
+const LLAMA_PRESETS_DIR = nodePath.join(REPROMPTY_CONFIG_DIR, "llama-cpp-presets");
+const LLAMA_PID_FILE = nodePath.join(REPROMPTY_CONFIG_DIR, "llama-server.pid");
+const LLAMA_CONFIG_FILE = nodePath.join(REPROMPTY_CONFIG_DIR, "llama-config.json");
+const GRAPHITI_COMPOSE_DIR = nodePath.join(os.homedir(), "Projects", "OS-Toolkit", "graphiti-mcp");
+
+function ensureConfigDir() {
+  if (!fs.existsSync(REPROMPTY_CONFIG_DIR)) {
+    fs.mkdirSync(REPROMPTY_CONFIG_DIR, { recursive: true });
+  }
+  if (!fs.existsSync(LLAMA_PRESETS_DIR)) {
+    fs.mkdirSync(LLAMA_PRESETS_DIR, { recursive: true });
+  }
+}
+
+function getLlamaServerPath(): string | null {
+  const config = fs.existsSync(LLAMA_CONFIG_FILE)
+    ? JSON.parse(fs.readFileSync(LLAMA_CONFIG_FILE, "utf-8"))
+    : {};
+  if (config.binaryPath && fs.existsSync(config.binaryPath)) {
+    return config.binaryPath;
+  }
+  const candidates = [
+    nodePath.join(os.homedir(), ".local", "bin", "llama-server"),
+    "/usr/local/bin/llama-server",
+    "/usr/bin/llama-server",
+  ];
+  for (const c of candidates) {
+    if (fs.existsSync(c)) return c;
+  }
+  return null;
+}
+
+function getHardwareDefaults() {
+  const cpus = os.cpus().length;
+  const ramBytes = os.totalmem();
+  const ramGiB = Math.round(ramBytes / (1024 ** 3));
+  return {
+    threads: Math.min(cpus, 32),
+    contextSize: ramGiB > 100 ? 65536 : 32768,
+    batchSize: ramGiB > 50 ? 1024 : 512,
+    ubatchSize: 512,
+    ramGiB,
+    cpus,
+  };
+}
+
+function createDefaultPresets() {
+  ensureConfigDir();
+  const hw = getHardwareDefaults();
+  const defaults: Record<string, unknown> = {
+    "qwen3-embedding:8b": {
+      name: "qwen3-embedding:8b",
+      modelPath: nodePath.join(os.homedir(), ".local", "share", "models", "qwen3-embedding-8b-q8_0.gguf"),
+      modelType: "embedding",
+      quantization: "Q8_0",
+      port: 8081,
+      contextSize: 8192,
+      gpuLayers: 0,
+      threads: hw.threads,
+      batchSize: hw.batchSize,
+      ubatchSize: hw.ubatchSize,
+      temperature: 0.0,
+      topP: 1.0,
+      topK: 0,
+      repeatPenalty: 1.0,
+      maxTokens: -1,
+      chatTemplate: "",
+      extraArgs: "--embedding",
+    },
+    "gemma-4-31b-chat": {
+      name: "gemma-4-31b-chat",
+      modelPath: nodePath.join(os.homedir(), ".local", "share", "models", "gemma-4-31b-it-Q8_0.gguf"),
+      modelType: "chat",
+      quantization: "Q8_0",
+      port: 8082,
+      contextSize: hw.contextSize,
+      gpuLayers: 0,
+      threads: hw.threads,
+      batchSize: hw.batchSize,
+      ubatchSize: hw.ubatchSize,
+      temperature: 0.8,
+      topP: 0.9,
+      topK: 40,
+      repeatPenalty: 1.1,
+      maxTokens: -1,
+      chatTemplate: "gemma",
+      extraArgs: "",
+    },
+    "qwen3.6-27b-chat": {
+      name: "qwen3.6-27b-chat",
+      modelPath: nodePath.join(os.homedir(), ".local", "share", "models", "qwen3.6-27b-Q8_0.gguf"),
+      modelType: "chat",
+      quantization: "Q8_0",
+      port: 8083,
+      contextSize: hw.contextSize,
+      gpuLayers: 0,
+      threads: hw.threads,
+      batchSize: hw.batchSize,
+      ubatchSize: hw.ubatchSize,
+      temperature: 0.8,
+      topP: 0.9,
+      topK: 40,
+      repeatPenalty: 1.1,
+      maxTokens: -1,
+      chatTemplate: "qwen",
+      extraArgs: "",
+    },
+    "vocal-model": {
+      name: "vocal-model",
+      modelPath: nodePath.join(os.homedir(), ".local", "share", "models", "vocal-model.gguf"),
+      modelType: "voice",
+      quantization: "Q8_0",
+      port: 8084,
+      contextSize: 4096,
+      gpuLayers: 0,
+      threads: hw.threads,
+      batchSize: 512,
+      ubatchSize: 512,
+      temperature: 0.6,
+      topP: 0.9,
+      topK: 40,
+      repeatPenalty: 1.0,
+      maxTokens: -1,
+      chatTemplate: "",
+      extraArgs: "",
+    },
+  };
+  for (const [name, preset] of Object.entries(defaults)) {
+    const path = nodePath.join(LLAMA_PRESETS_DIR, `${name}.json`);
+    if (!fs.existsSync(path)) {
+      fs.writeFileSync(path, JSON.stringify(preset, null, 2));
+    }
+  }
+}
+
+// Llama.cpp IPC handlers
+electron.ipcMain.handle("llama-list-presets", async () => {
+  ensureConfigDir();
+  createDefaultPresets();
+  const files = fs.readdirSync(LLAMA_PRESETS_DIR).filter((f) => f.endsWith(".json"));
+  return files.map((f) => f.replace(".json", ""));
+});
+
+electron.ipcMain.handle("llama-load-preset", async (_event: any, name: string) => {
+  ensureConfigDir();
+  const path = nodePath.join(LLAMA_PRESETS_DIR, `${name}.json`);
+  if (!fs.existsSync(path)) return null;
+  return JSON.parse(fs.readFileSync(path, "utf-8"));
+});
+
+electron.ipcMain.handle("llama-save-preset", async (_event: any, name: string, data: unknown) => {
+  ensureConfigDir();
+  const path = nodePath.join(LLAMA_PRESETS_DIR, `${name}.json`);
+  fs.writeFileSync(path, JSON.stringify(data, null, 2));
+  return true;
+});
+
+electron.ipcMain.handle("llama-delete-preset", async (_event: any, name: string) => {
+  const path = nodePath.join(LLAMA_PRESETS_DIR, `${name}.json`);
+  if (fs.existsSync(path)) fs.unlinkSync(path);
+  return true;
+});
+
+electron.ipcMain.handle("llama-start", async (_event: any, presetName: string) => {
+  const binary = getLlamaServerPath();
+  if (!binary) return { success: false, error: "llama-server not found. Install llama.cpp or set binary path in config." };
+
+  ensureConfigDir();
+  const presetPath = nodePath.join(LLAMA_PRESETS_DIR, `${presetName}.json`);
+  if (!fs.existsSync(presetPath)) return { success: false, error: `Preset '${presetName}' not found` };
+  const preset = JSON.parse(fs.readFileSync(presetPath, "utf-8"));
+
+  if (!fs.existsSync(LLAMA_PID_FILE)) {
+    // no-op
+  } else {
+    const oldPid = parseInt(fs.readFileSync(LLAMA_PID_FILE, "utf-8"), 10);
+    try { process.kill(oldPid, 0); } catch {
+      fs.unlinkSync(LLAMA_PID_FILE);
+    }
+  }
+
+  if (fs.existsSync(LLAMA_PID_FILE)) {
+    return { success: false, error: "llama-server is already running. Stop it first." };
+  }
+
+  const args = [
+    "-m", preset.modelPath,
+    "--port", String(preset.port || 8080),
+    "-c", String(preset.contextSize || 4096),
+    "-t", String(preset.threads || 4),
+    "-b", String(preset.batchSize || 512),
+    "-ub", String(preset.ubatchSize || 512),
+    "--temp", String(preset.temperature ?? 0.8),
+    "--top-p", String(preset.topP ?? 0.9),
+    "--top-k", String(preset.topK ?? 40),
+    "--repeat-penalty", String(preset.repeatPenalty ?? 1.1),
+    "-n", String(preset.maxTokens ?? -1),
+  ];
+  if (preset.gpuLayers) args.push("-ngl", String(preset.gpuLayers));
+  if (preset.chatTemplate) args.push("--chat-template", preset.chatTemplate);
+  if (preset.extraArgs) args.push(...preset.extraArgs.split(/\s+/).filter(Boolean));
+
+  const proc = spawn(binary, args, {
+    detached: true,
+    stdio: "ignore",
+  });
+  proc.unref();
+  fs.writeFileSync(LLAMA_PID_FILE, JSON.stringify({ pid: proc.pid, port: preset.port || 8080, preset: presetName }));
+  return { success: true, pid: proc.pid, port: preset.port || 8080 };
+});
+
+electron.ipcMain.handle("llama-stop", async () => {
+  if (!fs.existsSync(LLAMA_PID_FILE)) return { success: true };
+  const info = JSON.parse(fs.readFileSync(LLAMA_PID_FILE, "utf-8"));
+  try {
+    process.kill(info.pid, "SIGTERM");
+    // Wait up to 3s then SIGKILL
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    try { process.kill(info.pid, 0); process.kill(info.pid, "SIGKILL"); } catch {}
+  } catch {}
+  fs.unlinkSync(LLAMA_PID_FILE);
+  return { success: true };
+});
+
+electron.ipcMain.handle("llama-status", async () => {
+  if (!fs.existsSync(LLAMA_PID_FILE)) return { running: false };
+  const info = JSON.parse(fs.readFileSync(LLAMA_PID_FILE, "utf-8"));
+  try {
+    process.kill(info.pid, 0);
+    return { running: true, pid: info.pid, port: info.port, preset: info.preset };
+  } catch {
+    fs.unlinkSync(LLAMA_PID_FILE);
+    return { running: false };
+  }
+});
+
+electron.ipcMain.handle("llama-get-binary-path", async () => {
+  return getLlamaServerPath();
+});
+
+electron.ipcMain.handle("llama-set-binary-path", async (_event: any, binaryPath: string) => {
+  ensureConfigDir();
+  const config = fs.existsSync(LLAMA_CONFIG_FILE) ? JSON.parse(fs.readFileSync(LLAMA_CONFIG_FILE, "utf-8")) : {};
+  config.binaryPath = binaryPath;
+  fs.writeFileSync(LLAMA_CONFIG_FILE, JSON.stringify(config, null, 2));
+  return true;
+});
+
+// Graphiti MCP IPC handlers
+electron.ipcMain.handle("graphiti-start", async () => {
+  return new Promise((resolve) => {
+    exec("docker compose up -d", { cwd: GRAPHITI_COMPOSE_DIR }, (error, stdout, stderr) => {
+      if (error) {
+        resolve({ success: false, error: stderr || String(error) });
+      } else {
+        resolve({ success: true, output: stdout });
+      }
+    });
+  });
+});
+
+electron.ipcMain.handle("graphiti-stop", async () => {
+  return new Promise((resolve) => {
+    exec("docker compose down", { cwd: GRAPHITI_COMPOSE_DIR }, (error, stdout, stderr) => {
+      if (error) {
+        resolve({ success: false, error: stderr || String(error) });
+      } else {
+        resolve({ success: true, output: stdout });
+      }
+    });
+  });
+});
+
+electron.ipcMain.handle("graphiti-status", async () => {
+  return new Promise((resolve) => {
+    exec("docker compose ps --format json", { cwd: GRAPHITI_COMPOSE_DIR }, (error, stdout) => {
+      if (error) {
+        resolve({ running: false });
+        return;
+      }
+      const lines = stdout.trim().split("\n").filter(Boolean);
+      const running = lines.some((line) => {
+        try {
+          const obj = JSON.parse(line);
+          return obj.State === "running";
+        } catch { return false; }
+      });
+      resolve({ running });
+    });
+  });
+});
+
 // Allow self-signed certificates for local Portainer
 electron.app.on("certificate-error", (event, _webContents, url, _error, _certificate, callback) => {
   if (url.includes("localhost:9443") || url.includes("127.0.0.1:9443")) {

@@ -59,4 +59,24 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // Portainer proxy (bypasses renderer self-signed cert restrictions)
   portainerFetch: (method: string, url: string, body?: string) =>
     ipcRenderer.invoke("portainer-fetch", method, url, body),
+
+  // Llama.cpp preset management + server control
+  llamaListPresets: () => ipcRenderer.invoke("llama-list-presets"),
+  llamaLoadPreset: (name: string) => ipcRenderer.invoke("llama-load-preset", name),
+  llamaSavePreset: (name: string, data: unknown) => ipcRenderer.invoke("llama-save-preset", name, data),
+  llamaDeletePreset: (name: string) => ipcRenderer.invoke("llama-delete-preset", name),
+  llamaStart: (presetName: string) => ipcRenderer.invoke("llama-start", presetName),
+  llamaStop: () => ipcRenderer.invoke("llama-stop"),
+  llamaStatus: () => ipcRenderer.invoke("llama-status"),
+  llamaGetBinaryPath: () => ipcRenderer.invoke("llama-get-binary-path"),
+  llamaSetBinaryPath: (path: string) => ipcRenderer.invoke("llama-set-binary-path", path),
+
+  // Graphiti MCP control
+  graphitiStart: () => ipcRenderer.invoke("graphiti-start"),
+  graphitiStop: () => ipcRenderer.invoke("graphiti-stop"),
+  graphitiStatus: () => ipcRenderer.invoke("graphiti-status"),
+
+  // Generic MCP tool runner (for save/load task presets, etc.)
+  runMcpTool: (toolName: string, args?: Record<string, unknown>) =>
+    ipcRenderer.invoke("run-mcp-tool", toolName, args || {}),
 });
