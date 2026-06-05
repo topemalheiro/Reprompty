@@ -38,3 +38,4 @@ logs/security/
 
 # Built Electron apps (too large for GitHub)
 reprompty/release*/
+reprompty/reprompty-cdp-debug.log
