@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import ScriptsTab from "./ScriptsTab";
 import PortainerTab from "./PortainerTab";
+import LlamaCppTab from "./LlamaCppTab";
 
 interface DetectedWindow {
   pid: number;
@@ -91,6 +92,25 @@ interface ElectronAPI {
   onScriptStatusChanged: (callback: (data: unknown) => void) => void;
   removeScriptListeners: () => void;
   portainerFetch: (method: string, url: string, body?: string) => Promise<{ ok: boolean; status: number; data: string }>;
+
+  // Llama.cpp
+  llamaListPresets: () => Promise<string[]>;
+  llamaLoadPreset: (name: string) => Promise<Record<string, unknown> | null>;
+  llamaSavePreset: (name: string, data: unknown) => Promise<boolean>;
+  llamaDeletePreset: (name: string) => Promise<boolean>;
+  llamaStart: (presetName: string) => Promise<{ success: boolean; pid?: number; port?: number; error?: string }>;
+  llamaStop: () => Promise<{ success: boolean }>;
+  llamaStatus: () => Promise<{ running: boolean; pid?: number; port?: number; preset?: string }>;
+  llamaGetBinaryPath: () => Promise<string | null>;
+  llamaSetBinaryPath: (path: string) => Promise<boolean>;
+
+  // Graphiti MCP
+  graphitiStart: () => Promise<{ success: boolean; error?: string; output?: string }>;
+  graphitiStop: () => Promise<{ success: boolean; error?: string; output?: string }>;
+  graphitiStatus: () => Promise<{ running: boolean }>;
+
+  // Generic MCP tool runner
+  runMcpTool: (toolName: string, args?: Record<string, unknown>) => Promise<string>;
 }
 
 declare global {
@@ -149,7 +169,7 @@ function Mascot() {
 }
 
 function App() {
-  const [activeTab, setActiveTab] = useState<"windows" | "send" | "spawn" | "scripts" | "portainer">("windows");
+  const [activeTab, setActiveTab] = useState<"windows" | "send" | "spawn" | "scripts" | "portainer" | "llamacpp">("windows");
   const [detectedWindows, setDetectedWindows] = useState<DetectedWindow[]>([]);
   const [spawnTargets, setSpawnTargets] = useState<SpawnTarget[]>([]);
   const [virtualDesktops, setVirtualDesktops] = useState<VirtualDesktopInfo[]>([]);
@@ -165,6 +185,8 @@ function App() {
   const [targetFolderInput, setTargetFolderInput] = useState("");
   const [targetWindowNameInput, setTargetWindowNameInput] = useState("");
   const [targetDesktopInput, setTargetDesktopInput] = useState("");
+  const [presetNameInput, setPresetNameInput] = useState("");
+  const [taskPresets, setTaskPresets] = useState<string[]>([]);
 
   const selectedTargetPreview = useMemo(() => {
     const alias = (editingTargetId || targetIdInput || targetLabelInput)
@@ -213,6 +235,68 @@ function App() {
       if (!silent) {
         setStatus(`Failed to load virtual desktops: ${err}`);
       }
+    }
+  };
+
+  const loadTaskPresets = async () => {
+    try {
+      const result = await window.electronAPI.runMcpTool("list_task_presets");
+      const presets = JSON.parse(result) as string[];
+      setTaskPresets(presets);
+    } catch (err) {
+      setStatus(`Failed to load task presets: ${err}`);
+    }
+  };
+
+  const saveTaskPreset = async () => {
+    const name = presetNameInput.trim();
+    if (!name) {
+      setStatus("Enter a preset name");
+      return;
+    }
+    try {
+      const result = await window.electronAPI.runMcpTool("save_task_preset", { name });
+      const parsed = JSON.parse(result);
+      if (parsed.success) {
+        setStatus(`Saved preset "${name}"`);
+        setPresetNameInput("");
+        await loadTaskPresets();
+      } else {
+        setStatus(`Failed to save preset: ${parsed.error || "unknown"}`);
+      }
+    } catch (err) {
+      setStatus(`Error saving preset: ${err}`);
+    }
+  };
+
+  const loadTaskPresetByName = async (name: string) => {
+    try {
+      setStatus(`Loading preset "${name}"...`);
+      const result = await window.electronAPI.runMcpTool("load_task_preset", { name });
+      const parsed = JSON.parse(result);
+      if (parsed.success) {
+        setStatus(`Loaded preset "${name}" — spawned ${parsed.spawned} window(s)`);
+        await loadVirtualDesktops(true);
+      } else {
+        setStatus(`Failed to load preset: ${parsed.errors?.join(", ") || "unknown"}`);
+      }
+    } catch (err) {
+      setStatus(`Error loading preset: ${err}`);
+    }
+  };
+
+  const deleteTaskPresetByName = async (name: string) => {
+    try {
+      const result = await window.electronAPI.runMcpTool("delete_task_preset", { name });
+      const parsed = JSON.parse(result);
+      if (parsed.success) {
+        setStatus(`Deleted preset "${name}"`);
+        await loadTaskPresets();
+      } else {
+        setStatus(`Failed to delete preset: ${parsed.error || "unknown"}`);
+      }
+    } catch (err) {
+      setStatus(`Error deleting preset: ${err}`);
     }
   };
 
@@ -425,6 +509,7 @@ function App() {
           ["spawn", "Spawn"],
           ["scripts", "Scripts"],
           ["portainer", "Portainer"],
+          ["llamacpp", "Llama.cpp"],
         ] as const).map(([id, label]) => (
           <button
             key={id}
@@ -692,12 +777,60 @@ function App() {
                 )}
               </div>
             </div>
+
+            <div style={styles.spawnSection}>
+              <div style={styles.sectionHeader}>
+                <h3 style={styles.sectionTitle}>Task Presets</h3>
+                <button style={styles.secondaryBtn} onClick={loadTaskPresets}>
+                  Refresh
+                </button>
+              </div>
+              <div style={styles.targetForm}>
+                <input
+                  style={styles.input}
+                  placeholder="Preset name (e.g. Coding, Docs)"
+                  value={presetNameInput}
+                  onChange={(event) => setPresetNameInput(event.target.value)}
+                />
+                <button style={{ ...styles.btn, marginTop: 12 }} onClick={saveTaskPreset}>
+                  Save Current Layout
+                </button>
+              </div>
+              <div style={styles.targetList}>
+                {taskPresets.length === 0 ? (
+                  <p style={styles.empty}>No saved task presets yet</p>
+                ) : (
+                  taskPresets.map((preset) => (
+                    <div key={preset} style={styles.targetCard}>
+                      <div style={styles.targetInfo}>
+                        <strong style={styles.targetName}>{preset}</strong>
+                      </div>
+                      <div style={styles.targetActions}>
+                        <button
+                          style={styles.btn}
+                          onClick={() => void loadTaskPresetByName(preset)}
+                        >
+                          Load
+                        </button>
+                        <button
+                          style={styles.dangerBtn}
+                          onClick={() => void deleteTaskPresetByName(preset)}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
           </div>
         )}
 
         {activeTab === "scripts" && <ScriptsTab setStatus={setStatus} />}
 
         {activeTab === "portainer" && <PortainerTab />}
+        {activeTab === "llamacpp" && <LlamaCppTab />}
 
         {status && <div style={styles.status}>{status}</div>}
       </main>
