@@ -38,6 +38,12 @@ import {
   findNewWindowCandidates,
   selectUniqueWindowByTitle,
 } from "./window-targeting.js";
+import {
+  saveTaskPreset,
+  loadTaskPreset,
+  listTaskPresets,
+  deleteTaskPreset,
+} from "../core/task-preset-manager.js";
 
 export interface MCPTool {
   name: string;
@@ -347,6 +353,56 @@ const BUILT_IN_TOOLS: MCPTool[] = [
     inputSchema: {
       type: "object",
       properties: {},
+    },
+  },
+  {
+    name: "save_task_preset",
+    description: "Save the current virtual desktop and VS Code: window layout as a named task preset",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: {
+          type: "string",
+          description: "Unique name for the preset (e.g., 'Coding', 'Docs')",
+        },
+      },
+      required: ["name"],
+    },
+  },
+  {
+    name: "load_task_preset",
+    description: "Restore a saved task preset: recreate virtual desktops and spawn VS Code: windows",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: {
+          type: "string",
+          description: "Name of the preset to restore",
+        },
+      },
+      required: ["name"],
+    },
+  },
+  {
+    name: "list_task_presets",
+    description: "List all saved task preset names",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+  },
+  {
+    name: "delete_task_preset",
+    description: "Delete a saved task preset by name",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: {
+          type: "string",
+          description: "Name of the preset to delete",
+        },
+      },
+      required: ["name"],
     },
   },
 ];
@@ -1407,6 +1463,49 @@ export async function callTool(
           2
         ),
         !available
+      );
+    }
+
+    case "save_task_preset": {
+      const presetName =
+        typeof args.name === "string" ? args.name.trim() : "";
+      if (!presetName) {
+        return textResult("Preset name is required", true);
+      }
+      const result = await saveTaskPreset(presetName);
+      return textResult(
+        JSON.stringify(result, null, 2),
+        !result.success
+      );
+    }
+
+    case "load_task_preset": {
+      const presetName =
+        typeof args.name === "string" ? args.name.trim() : "";
+      if (!presetName) {
+        return textResult("Preset name is required", true);
+      }
+      const result = await loadTaskPreset(presetName);
+      return textResult(
+        JSON.stringify(result, null, 2),
+        !result.success
+      );
+    }
+
+    case "list_task_presets": {
+      return textResult(JSON.stringify(listTaskPresets(), null, 2));
+    }
+
+    case "delete_task_preset": {
+      const presetName =
+        typeof args.name === "string" ? args.name.trim() : "";
+      if (!presetName) {
+        return textResult("Preset name is required", true);
+      }
+      const result = deleteTaskPreset(presetName);
+      return textResult(
+        JSON.stringify(result, null, 2),
+        !result.success
       );
     }
 
