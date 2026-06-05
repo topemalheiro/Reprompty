@@ -66,7 +66,7 @@ export async function switchToVirtualDesktop(
 }
 
 export async function moveWindowToVirtualDesktop(
-  windowHandle: number,
+  windowHandle: number | string,
   requestedName: string
 ): Promise<MoveWindowToVirtualDesktopResult> {
   return (await getImpl()).moveWindowToVirtualDesktop(windowHandle, requestedName);

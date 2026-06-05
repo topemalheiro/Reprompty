@@ -836,7 +836,8 @@ export async function detectWindows(): Promise<DetectedWindow[]> {
             `"${getKdotoolPath()}" get_desktop_for_window ${win.handle}`,
             { encoding: "utf-8", timeout: 2000 }
           ).trim();
-          const desktopIndex = parseInt(desktopIndexStr, 10);
+          // kdotool returns 1-based desktop numbers; our indices are 0-based
+          const desktopIndex = parseInt(desktopIndexStr, 10) - 1;
           const desktopInfo = virtualDesktops.find((d) => d.index === desktopIndex);
           if (desktopInfo) {
             desktop = desktopInfo.name;

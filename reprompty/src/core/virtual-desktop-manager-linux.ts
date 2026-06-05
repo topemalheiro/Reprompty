@@ -26,7 +26,7 @@ export interface EnsureVirtualDesktopResult extends VirtualDesktopMutationResult
 
 export interface MoveWindowToVirtualDesktopResult
   extends VirtualDesktopMutationResult {
-  handle?: number;
+  handle?: number | string;
   isCurrentDesktop?: boolean;
 }
 
@@ -694,12 +694,13 @@ function findKdotoolHandleByPid(pid: number): string | null {
 }
 
 export async function moveWindowToVirtualDesktop(
-  windowHandle: number,
+  windowHandle: number | string,
   requestedName: string
 ): Promise<MoveWindowToVirtualDesktopResult> {
   try {
-    if (!Number.isFinite(windowHandle) || !Number.isInteger(windowHandle) || windowHandle <= 0) {
-      return { success: false, error: "Window handle must be a positive integer" };
+    const isKdotoolHandle = typeof windowHandle === "string" && windowHandle.startsWith("{");
+    if (!isKdotoolHandle && (!Number.isFinite(windowHandle as number) || !Number.isInteger(windowHandle as number) || (windowHandle as number) <= 0)) {
+      return { success: false, error: "Window handle must be a positive integer or a kdotool UUID" };
     }
 
     const desktops = await listVirtualDesktops();
@@ -726,12 +727,15 @@ export async function moveWindowToVirtualDesktop(
     }
 
     if (!moved && hasKdotool()) {
-      const kdotoolHandle = findKdotoolHandleByPid(windowHandle);
+      let kdotoolHandle: string | null = isKdotoolHandle ? windowHandle as string : null;
+      if (!kdotoolHandle) {
+        kdotoolHandle = findKdotoolHandleByPid(windowHandle as number);
+      }
       if (!kdotoolHandle) {
         return {
           success: false,
           handle: windowHandle,
-          error: `wmctrl failed and kdotool could not find window for PID ${windowHandle}`,
+          error: `wmctrl failed and kdotool could not find window for handle ${windowHandle}`,
         };
       }
       execSync(
@@ -755,8 +759,8 @@ export async function moveWindowToVirtualDesktop(
     const refreshedDesktop =
       resolveVirtualDesktopByName(refreshedDesktops, requestedName).desktop ??
       resolved.desktop;
-    const assignments = await getWindowDesktopAssignments([windowHandle]);
-    const assignment = assignments.find((entry) => entry.handle === windowHandle);
+    const assignments = await getWindowDesktopAssignments([typeof windowHandle === "number" ? windowHandle : 0]);
+    const assignment = assignments.find((entry) => entry.handle === (typeof windowHandle === "number" ? windowHandle : 0));
 
     return {
       success: true,
@@ -834,7 +838,8 @@ export async function getWindowDesktopAssignments(
               `"${getKdotoolPath()}" get_desktop_for_window ${kdotoolHandle}`,
               { encoding: "utf-8", timeout: 2000 }
             ).trim();
-            const desktopIndex = parseInt(desktopIndexStr, 10);
+            // kdotool returns 1-based desktop numbers; our indices are 0-based
+            const desktopIndex = parseInt(desktopIndexStr, 10) - 1;
             const desktop = desktops.find((d) => d.index === desktopIndex);
             if (desktop) {
               results.push({

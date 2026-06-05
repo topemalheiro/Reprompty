@@ -943,7 +943,7 @@ async function executeSpawnWorkflow(
     desktopResolution.desktop
   ) {
     moveResult = await moveWindowToVirtualDesktop(
-      matchedWindow.handle,
+      matchedWindow.kdotoolHandle || matchedWindow.handle,
       desktopResolution.desktop
     );
 
@@ -1188,22 +1188,36 @@ export async function callTool(
         }
       }
 
+      // Resolve extension: use stored value or auto-detect from current windows
+      let extension = cfg.extension;
+      if (!extension && (cfg.windowTitle || cfg.folderPath)) {
+        const windows = await detectWindows();
+        const match = windows.find(
+          (w) =>
+            (cfg.windowTitle && w.title.includes(cfg.windowTitle)) ||
+            (cfg.folderPath && w.folderPath.includes(cfg.folderPath))
+        );
+        if (match) {
+          extension = match.extension;
+        }
+      }
+
       // Fall back to CDP for Kilo Code:, Kimi Code:, Codex, and Claude Code:
       if (
-        cfg.extension === "claude-code" ||
-        cfg.extension === "codex" ||
-        cfg.extension === "kilo-code" ||
-        cfg.extension === "kimi-code"
+        extension === "claude-code" ||
+        extension === "codex" ||
+        extension === "kilo-code" ||
+        extension === "kimi-code"
       ) {
         const port = getCdpPort();
         if (port) {
           const result = await sendViaAgentCdp(port, prompt, {
-            agent: cfg.extension,
+            agent: extension,
             windowTitle: cfg.windowTitle,
           });
           if (result.success) {
             connectionManager.updateConnectionStatus(connection.id, "active");
-            return textResult(`Sent to ${connection.name} via ${cfg.extension} CDP (background)`);
+            return textResult(`Sent to ${connection.name} via ${extension} CDP (background)`);
           }
           return textResult(
             `CDP send failed for ${connection.name}: ${result.error || "unknown error"}`,
@@ -1217,7 +1231,7 @@ export async function callTool(
       }
 
       return textResult(
-        `No background method available for ${connection.name}. Use foreground from Reprompty UI.`,
+        `No background method available for ${connection.name} (extension: ${extension ?? "unknown"}). Use foreground from Reprompty UI.`,
         true
       );
     }
@@ -1281,30 +1295,44 @@ export async function callTool(
             }
           }
 
+          // Resolve extension: use stored value or auto-detect from current windows
+          let extension = cfg.extension;
+          if (!extension && (cfg.windowTitle || cfg.folderPath)) {
+            const windows = await detectWindows();
+            const match = windows.find(
+              (w) =>
+                (cfg.windowTitle && w.title.includes(cfg.windowTitle)) ||
+                (cfg.folderPath && w.folderPath.includes(cfg.folderPath))
+            );
+            if (match) {
+              extension = match.extension;
+            }
+          }
+
           // Fall back to CDP
           if (!sent && (
-            cfg.extension === "claude-code" ||
-            cfg.extension === "codex" ||
-            cfg.extension === "kilo-code" ||
-            cfg.extension === "kimi-code"
+            extension === "claude-code" ||
+            extension === "codex" ||
+            extension === "kilo-code" ||
+            extension === "kimi-code"
           )) {
             const port = getCdpPort();
             if (!port) {
               throw new Error("CDP port not available");
             }
             const cdpResult = await sendViaAgentCdp(port, promptTask.prompt, {
-              agent: cfg.extension,
+              agent: extension,
               windowTitle: cfg.windowTitle,
             });
             if (!cdpResult.success) {
               throw new Error(cdpResult.error || "CDP failed");
             }
-            results.push(`Sent to ${connection.name} (${cfg.extension} CDP)`);
+            results.push(`Sent to ${connection.name} (${extension} CDP)`);
             sent = true;
           }
 
           if (!sent) {
-            throw new Error("No background method available");
+            throw new Error(`No background method available (extension: ${extension ?? "unknown"})`);
           }
         } catch (err) {
           results.push(`Failed: ${connection.name} - ${err}`);
