@@ -75,7 +75,28 @@ if (!isInElectron) {
 }
 
 // Use a single require('electron') call and destructure
-const electronModule = require('electron');
+let electronModule = require('electron');
+
+// If ELECTRON_RUN_AS_NODE is set, require('electron') returns the npm package string.
+// Detect this and force a re-require after clearing the env var.
+if (typeof electronModule === 'string' || !electronModule.app) {
+  if (process.env.ELECTRON_RUN_AS_NODE || process.env.ELECTRON_NO_ATTACH_CONSOLE) {
+    console.warn('[Main] Detected Electron Node mode (ELECTRON_RUN_AS_NODE is set). Clearing and re-requiring electron...');
+    delete process.env.ELECTRON_RUN_AS_NODE;
+    delete process.env.ELECTRON_NO_ATTACH_CONSOLE;
+    // Clear the module cache so require('electron') re-resolves
+    delete (require as any).cache[(require as any).resolve('electron')];
+    electronModule = require('electron');
+  }
+}
+
+if (typeof electronModule === 'string' || !electronModule.app) {
+  console.error('❌ FATAL: require("electron") returned the npm package string instead of the Electron API.');
+  console.error('   This usually means ELECTRON_RUN_AS_NODE is set in the launch environment.');
+  console.error('   Value received:', electronModule);
+  process.exit(1);
+}
+
 const electron = {
   app: electronModule.app,
   BrowserWindow: electronModule.BrowserWindow,
@@ -83,7 +104,8 @@ const electron = {
   Menu: electronModule.Menu,
   nativeImage: electronModule.nativeImage,
   ipcMain: electronModule.ipcMain,
-  shell: electronModule.shell
+  shell: electronModule.shell,
+  globalShortcut: (electronModule as any).globalShortcut
 };
 
 console.log("[Main] Electron modules loaded");

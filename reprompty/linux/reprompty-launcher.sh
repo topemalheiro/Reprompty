@@ -9,4 +9,4 @@ unset ELECTRON_RUN_AS_NODE
 unset ELECTRON_NO_ATTACH_CONSOLE
 
 cd "$REPO_DIR" || exit 1
-exec npx electron . "$@"
+exec "$REPO_DIR/node_modules/electron/dist/electron" . "$@"

@@ -5,10 +5,10 @@
   "author": "Reprompty",
   "main": "dist/main/index.js",
   "scripts": {
-    "dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && cross-env ELECTRON_RUN_AS_NODE= electron .\"",
+    "dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
     "build": "vite build",
     "build:mcp": "esbuild src/mcp/server.ts --bundle --platform=node --format=cjs --outfile=dist/mcp/server.js --external:electron",
-    "start": "cross-env ELECTRON_RUN_AS_NODE= electron .",
+    "start": "electron .",
     "mcp": "bun run src/mcp/server.ts"
   },
   "dependencies": {
