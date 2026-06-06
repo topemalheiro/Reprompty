@@ -653,6 +653,53 @@ function App() {
             </div>
 
             <div style={styles.spawnSection}>
+              <div style={styles.sectionHeader}>
+                <h3 style={styles.sectionTitle}>Task Presets</h3>
+                <button style={styles.secondaryBtn} onClick={loadTaskPresets}>
+                  Refresh
+                </button>
+              </div>
+              <div style={styles.targetForm}>
+                <input
+                  style={styles.input}
+                  placeholder="Preset name (e.g. Coding, Docs)"
+                  value={presetNameInput}
+                  onChange={(event) => setPresetNameInput(event.target.value)}
+                />
+                <button style={{ ...styles.btn, marginTop: 12 }} onClick={saveTaskPreset}>
+                  Save Current Layout
+                </button>
+              </div>
+              <div style={styles.targetList}>
+                {taskPresets.length === 0 ? (
+                  <p style={styles.empty}>No saved task presets yet</p>
+                ) : (
+                  taskPresets.map((preset) => (
+                    <div key={preset} style={styles.targetCard}>
+                      <div style={styles.targetInfo}>
+                        <strong style={styles.targetName}>{preset}</strong>
+                      </div>
+                      <div style={styles.targetActions}>
+                        <button
+                          style={styles.btn}
+                          onClick={() => void loadTaskPresetByName(preset)}
+                        >
+                          Load
+                        </button>
+                        <button
+                          style={styles.dangerBtn}
+                          onClick={() => void deleteTaskPresetByName(preset)}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            <div style={styles.spawnSection}>
               <h3 style={styles.sectionTitle}>Quick Spawn</h3>
               <input
                 style={styles.input}
@@ -770,53 +817,6 @@ function App() {
                           onClick={() => void removeSpawnTarget(target.id)}
                         >
                           Remove
-                        </button>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-
-            <div style={styles.spawnSection}>
-              <div style={styles.sectionHeader}>
-                <h3 style={styles.sectionTitle}>Task Presets</h3>
-                <button style={styles.secondaryBtn} onClick={loadTaskPresets}>
-                  Refresh
-                </button>
-              </div>
-              <div style={styles.targetForm}>
-                <input
-                  style={styles.input}
-                  placeholder="Preset name (e.g. Coding, Docs)"
-                  value={presetNameInput}
-                  onChange={(event) => setPresetNameInput(event.target.value)}
-                />
-                <button style={{ ...styles.btn, marginTop: 12 }} onClick={saveTaskPreset}>
-                  Save Current Layout
-                </button>
-              </div>
-              <div style={styles.targetList}>
-                {taskPresets.length === 0 ? (
-                  <p style={styles.empty}>No saved task presets yet</p>
-                ) : (
-                  taskPresets.map((preset) => (
-                    <div key={preset} style={styles.targetCard}>
-                      <div style={styles.targetInfo}>
-                        <strong style={styles.targetName}>{preset}</strong>
-                      </div>
-                      <div style={styles.targetActions}>
-                        <button
-                          style={styles.btn}
-                          onClick={() => void loadTaskPresetByName(preset)}
-                        >
-                          Load
-                        </button>
-                        <button
-                          style={styles.dangerBtn}
-                          onClick={() => void deleteTaskPresetByName(preset)}
-                        >
-                          Delete
                         </button>
                       </div>
                     </div>
