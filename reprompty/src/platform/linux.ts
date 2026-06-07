@@ -517,6 +517,105 @@ export function listWindows(): WindowInfo[] {
  * Send a message to a window via foreground clipboard+key simulation.
  * On X11 uses xdotool. On Wayland uses kdotool windowactivate + wl-copy + wtype/ydotool.
  */
+/**
+ * Execute a VS Code: command via the Command Palette using foreground key simulation.
+ * On Wayland uses kdotool windowactivate + wtype/ydotool.
+ * On X11 uses xdotool.
+ */
+export async function executeCommandForeground(
+  windowHandle: number,
+  command: string
+): Promise<boolean> {
+  try {
+    if (isWaylandSession()) {
+      const kdotoolPath = getKdotoolPath();
+      const kdotoolHandle = hasKdotool() ? findKdotoolHandleByPid(windowHandle) : null;
+
+      const script = `
+#!/bin/bash
+# Focus window
+${kdotoolHandle ? `"${kdotoolPath}" windowactivate ${kdotoolHandle}` : "# kdotool handle not found"}
+${kdotoolHandle ? "sleep 0.2" : "# skipping focus wait"}
+
+# Open Command Palette (Ctrl+Shift+P)
+wtype_ok=false
+if command -v wtype >/dev/null 2>&1; then
+  if wtype -M ctrl -M shift -k p -m shift -m ctrl 2>/dev/null; then
+    sleep 0.3
+    if wtype '${command.replace(/'/g, "'\"'\"'")}' 2>/dev/null; then
+      sleep 0.2
+      if wtype -k Return 2>/dev/null; then
+        wtype_ok=true
+      fi
+    fi
+  fi
+fi
+
+if [ "$wtype_ok" != "true" ] && command -v ydotool >/dev/null 2>&1; then
+  if [ ! -S /run/user/$(id -u)/ydotoold_socket ]; then
+    ydotoold --socket-path=/run/user/$(id -u)/ydotoold_socket --socket-own=$(id -u):$(id -g) &
+    sleep 0.5
+  fi
+  export YDOTOOL_SOCKET=/run/user/$(id -u)/ydotoold_socket
+  # Ctrl+Shift+P
+  ydotool key 29:1 42:1 25:1 25:0 42:0 29:0
+  sleep 0.3
+  echo -n '${command.replace(/'/g, "'\"'\"'")}' | ydotool type --file -
+  sleep 0.2
+  ydotool key 28:1 28:0
+  wtype_ok=true
+elif [ "$wtype_ok" != "true" ]; then
+  echo "No typing tool available (wtype or ydotool)" >&2
+  exit 1
+fi
+
+echo "executed"
+`;
+      const shFile = nodePath.join(getWritableTempDir(), `reprompty-cmd-${Date.now()}.sh`);
+      fs.writeFileSync(shFile, script, "utf-8");
+      fs.chmodSync(shFile, 0o755);
+
+      const result = execSync(`"${shFile}"`, { encoding: "utf-8", timeout: 10000 }).trim();
+      try { fs.unlinkSync(shFile); } catch { /* ignore */ }
+      return result.includes("executed");
+    }
+
+    // X11 path
+    const script = `
+#!/bin/bash
+handle="${windowHandle}"
+
+# Focus window
+xdotool windowactivate "$handle"
+sleep 0.2
+
+# Open Command Palette (Ctrl+Shift+P)
+xdotool key --clearmodifiers ctrl+shift+p
+sleep 0.3
+
+# Type command
+xdotool type --clearmodifiers '${command.replace(/'/g, "'\"'\"'")}'
+sleep 0.2
+
+# Press Enter
+xdotool key --clearmodifiers Return
+sleep 0.05
+
+echo "executed"
+`;
+    const shFile = nodePath.join(getWritableTempDir(), `reprompty-cmd-${Date.now()}.sh`);
+    fs.writeFileSync(shFile, script, "utf-8");
+    fs.chmodSync(shFile, 0o755);
+
+    const result = execSync(`"${shFile}"`, { encoding: "utf-8", timeout: 10000 }).trim();
+    try { fs.unlinkSync(shFile); } catch { /* ignore */ }
+    return result.includes("executed");
+  } catch (err) {
+    console.error("[executeCommandForeground] Error:", err);
+    return false;
+  }
+}
+
 export async function sendMessageForeground(
   windowHandle: number,
   message: string

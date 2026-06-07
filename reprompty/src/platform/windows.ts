@@ -335,6 +335,18 @@ Write-Output "sent"
   }
 }
 
+/**
+ * Stub for executeCommandForeground on Windows.
+ * Not yet implemented — falls back to returning false.
+ */
+export async function executeCommandForeground(
+  _windowHandle: number,
+  _command: string
+): Promise<boolean> {
+  console.warn("[executeCommandForeground] Not implemented on Windows");
+  return false;
+}
+
 // ============================================================================
 // WINDOW AUTO-DETECTION
 // ============================================================================
