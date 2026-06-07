@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import {
   connectionManager,
   type ConnectionType,
@@ -30,7 +31,7 @@ import {
   detectWindows,
   detectAllWindows,
   getCdpPort,
-  executeCommandForeground,
+  getWorkspacePathFromPid,
   type DetectedWindow,
 } from "../platform/index.js";
 import { sendViaAgentCdp, isCdpAvailable } from "../core/cdp-client.js";
@@ -409,7 +410,7 @@ const BUILT_IN_TOOLS: MCPTool[] = [
   {
     name: "duplicate_workspace_in_new_window",
     description:
-      "Duplicate the current workspace as a new VS Code: window. Focuses the target window, opens the Command Palette, and executes 'Workspaces: Duplicate As Workspace in New Window'.",
+      "Duplicate the current workspace as a new VS Code: window. Optionally apply a layout slot to the newly created window.",
     inputSchema: {
       type: "object",
       properties: {
@@ -420,6 +421,10 @@ const BUILT_IN_TOOLS: MCPTool[] = [
         folderPath: {
           type: "string",
           description: "Folder path substring to identify the target VS Code: window",
+        },
+        slot: {
+          type: "string",
+          description: "Optional layout slot to apply to the new window (e.g. 'A', 'B', or slot name)",
         },
       },
     },
@@ -1562,6 +1567,7 @@ export async function callTool(
         typeof args.windowTitle === "string" ? args.windowTitle.trim() : "";
       const folderPath =
         typeof args.folderPath === "string" ? args.folderPath.trim() : "";
+      const slotKey = typeof args.slot === "string" ? args.slot.trim() : "";
 
       const target = windows.find((w) => {
         if (windowTitle && w.title.includes(windowTitle)) return true;
@@ -1578,20 +1584,87 @@ export async function callTool(
         );
       }
 
-      const handle = target.kdotoolHandle
-        ? parseInt(target.kdotoolHandle, 10)
-        : target.handle;
+      const workspacePath = getWorkspacePathFromPid(target.pid);
+      if (!workspacePath) {
+        return textResult(
+          `Could not determine workspace path for "${target.title}" (PID ${target.pid}). The window may not have a folder/workspace open.`,
+          true
+        );
+      }
 
-      const success = await executeCommandForeground(
-        handle,
-        "Workspaces: Duplicate As Workspace in New Window"
-      );
+      let openPath = workspacePath;
+
+      // If it's a folder (not a .code-workspace file), create a temporary
+      // workspace file so VS Code: always opens a new window instead of
+      // focusing the existing one.
+      if (!workspacePath.endsWith(".code-workspace")) {
+        const tmpDir = require("node:os").tmpdir();
+        const wsName = require("node:path").basename(workspacePath);
+        const tmpWsFile = require("node:path").join(
+          tmpDir,
+          `reprompty-dup-${wsName}-${Date.now()}.code-workspace`
+        );
+        require("node:fs").writeFileSync(
+          tmpWsFile,
+          JSON.stringify({ folders: [{ path: workspacePath }], settings: {} }, null, 2),
+          "utf-8"
+        );
+        openPath = tmpWsFile;
+      }
+
+      const baselineWindows = await detectWindows();
+      const titleHints = buildSpawnTitleHints({
+        folderPath: workspacePath,
+        windowName: undefined,
+      });
+
+      // Spawn VS Code: in a new window — completely background, no input interference
+      const child = spawn("code", ["-n", openPath], {
+        detached: true,
+        stdio: "ignore",
+      });
+      child.unref();
+
+      // Wait for the new window to appear
+      const selection = await waitForSpawnedWindow(baselineWindows, titleHints);
+
+      if (!selection.matchedWindow) {
+        return textResult(
+          `Duplicated workspace "${workspacePath}" in a new VS Code: window, but could not detect the new window for layout. Reason: ${selection.reason}`,
+          !slotKey // error only if layout was requested
+        );
+      }
+
+      // Apply layout if slot was requested
+      if (slotKey) {
+        const slot = resolveLayoutSlot(slotKey);
+        if (!slot) {
+          const available = layoutManager
+            .listSlots()
+            .map((item) => `${item.letter}: ${item.name}`)
+            .join(", ");
+          return textResult(
+            `Duplicated workspace "${workspacePath}". Slot "${slotKey}" not found. Available: ${available}`,
+            true
+          );
+        }
+
+        const layoutTarget: LayoutTarget = {
+          windowHandle: selection.matchedWindow.handle,
+          windowTitle: selection.matchedWindow.title,
+        };
+        const layoutResult = await layoutManager.applySlot(slot.id, layoutTarget);
+
+        return textResult(
+          layoutResult.success
+            ? `Duplicated workspace "${workspacePath}" and applied layout slot ${slot.letter}`
+            : `Duplicated workspace "${workspacePath}" but layout failed: ${layoutResult.error}`,
+          !layoutResult.success
+        );
+      }
 
       return textResult(
-        success
-          ? `Duplicated workspace from "${target.title}" as new window`
-          : `Failed to duplicate workspace for "${target.title}"`,
-        !success
+        `Duplicated workspace "${workspacePath}" in a new VS Code: window`
       );
     }
 

@@ -19,6 +19,7 @@ export const getDefaultSocketPath = impl.getDefaultSocketPath;
 export const listWindows = impl.listWindows;
 export const sendMessageForeground = impl.sendMessageForeground;
 export const executeCommandForeground = impl.executeCommandForeground;
+export const getWorkspacePathFromPid = impl.getWorkspacePathFromPid;
 export const detectWindows = impl.detectWindows;
 export const detectAllWindows = impl.detectAllWindows;
 export const getCdpPort = impl.getCdpPort;
