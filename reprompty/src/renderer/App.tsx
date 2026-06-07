@@ -208,6 +208,7 @@ function App() {
   useEffect(() => {
     void loadSpawnTargets();
     void loadVirtualDesktops();
+    void loadTaskPresets();
     window.electronAPI.detectWindows().then(setDetectedWindows).catch(() => undefined);
     window.electronAPI.onWindowsDetected((windows) => {
       setDetectedWindows(windows);
