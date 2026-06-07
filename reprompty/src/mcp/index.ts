@@ -1572,6 +1572,11 @@ export async function callTool(
       const target = windows.find((w) => {
         if (windowTitle && w.title.includes(windowTitle)) return true;
         if (folderPath && w.folderPath.includes(folderPath)) return true;
+        // Also try matching against the resolved workspace path from the title
+        if (folderPath) {
+          const resolved = getWorkspacePathFromPid(w.pid, w.title);
+          if (resolved && resolved.includes(folderPath)) return true;
+        }
         return false;
       });
 
@@ -1584,7 +1589,7 @@ export async function callTool(
         );
       }
 
-      const workspacePath = getWorkspacePathFromPid(target.pid);
+      const workspacePath = getWorkspacePathFromPid(target.pid, target.title);
       if (!workspacePath) {
         return textResult(
           `Could not determine workspace path for "${target.title}" (PID ${target.pid}). The window may not have a folder/workspace open.`,
@@ -1635,6 +1640,20 @@ export async function callTool(
         );
       }
 
+      // Move the new window to the same desktop as the source window
+      if (target.desktop) {
+        const moveResult = await moveWindowToVirtualDesktop(
+          selection.matchedWindow.kdotoolHandle || selection.matchedWindow.handle,
+          target.desktop
+        );
+        if (!moveResult.success) {
+          console.warn(
+            `[duplicate_workspace_in_new_window] Failed to move new window to desktop ${target.desktop}:`,
+            moveResult.error
+          );
+        }
+      }
+
       // Apply layout if slot was requested
       if (slotKey) {
         const slot = resolveLayoutSlot(slotKey);
@@ -1650,8 +1669,12 @@ export async function callTool(
         }
 
         const layoutTarget: LayoutTarget = {
-          windowHandle: selection.matchedWindow.handle,
+          // Pass windowTitle instead of windowHandle — the layout daemon
+          // on Linux/Wayland matches by kdotool UUID or title substring.
+          // PID-based handles don't work across VS Code: windows since
+          // they all share the same process.
           windowTitle: selection.matchedWindow.title,
+          kdotoolHandle: selection.matchedWindow.kdotoolHandle,
         };
         const layoutResult = await layoutManager.applySlot(slot.id, layoutTarget);
 

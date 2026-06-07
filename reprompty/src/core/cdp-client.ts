@@ -336,10 +336,17 @@ function buildWindowAgentState(
 ): WindowAgentState {
   const iframeAgents = group.iframes.map((target) => mapTargetUrlToAgent(target.url));
   const labelAgents = probe.labels.map((label) => mapAgentLabelToKind(label));
+  const availableAgents = uniqueAgents([...iframeAgents, ...labelAgents]);
+  let activeAgent = mapAgentLabelToKind(probe.activeLabel);
+  // If no explicit active tab is selected but only one agent is loaded,
+  // it's reasonable to assume that agent is active.
+  if (activeAgent === "unknown" && availableAgents.length === 1) {
+    activeAgent = availableAgents[0];
+  }
   return {
     pageTitle: group.page.title,
-    activeAgent: mapAgentLabelToKind(probe.activeLabel),
-    availableAgents: uniqueAgents([...iframeAgents, ...labelAgents]),
+    activeAgent,
+    availableAgents,
   };
 }
 
@@ -353,12 +360,13 @@ export async function getWindowAgentStates(port: number): Promise<WindowAgentSta
       const probe = await probeViewSwitcher(group);
       states.push(buildWindowAgentState(group, probe));
     } catch {
+      const availableAgents = uniqueAgents(
+        group.iframes.map((target) => mapTargetUrlToAgent(target.url))
+      );
       states.push({
         pageTitle: group.page.title,
-        activeAgent: "unknown",
-        availableAgents: uniqueAgents(
-          group.iframes.map((target) => mapTargetUrlToAgent(target.url))
-        ),
+        activeAgent: availableAgents.length === 1 ? availableAgents[0] : "unknown",
+        availableAgents,
       });
     }
   }

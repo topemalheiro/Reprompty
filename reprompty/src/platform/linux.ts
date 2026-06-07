@@ -518,31 +518,74 @@ export function listWindows(): WindowInfo[] {
  * On X11 uses xdotool. On Wayland uses kdotool windowactivate + wl-copy + wtype/ydotool.
  */
 /**
- * Read the workspace/folder path from a VS Code: process's command line.
- * Reads /proc/<pid>/cmdline and returns the first non-binary argument
- * that looks like a folder or .code-workspace file.
+ * Extract workspace name from a VS Code: window title.
+ * Titles look like "filename - WorkspaceName - Visual Studio Code:"
+ * or "WorkspaceName - Visual Studio Code:".
  */
-export function getWorkspacePathFromPid(pid: number): string | null {
+function extractWorkspaceNameFromTitle(title: string): string | null {
+  const suffix = " - Visual Studio Code:";
+  if (!title.includes(suffix)) return null;
+  const withoutSuffix = title.slice(0, title.indexOf(suffix));
+  const lastDash = withoutSuffix.lastIndexOf(" - ");
+  if (lastDash === -1) return withoutSuffix.trim();
+  return withoutSuffix.slice(lastDash + 3).trim();
+}
+
+/**
+ * Search common project directories for a folder matching the workspace name.
+ */
+function findProjectPathByName(name: string): string | null {
+  const searchRoots = [
+    "/home/tope/Projects",
+    "/home/tope/Projects/OS-Toolkit",
+    "/home/tope/projects",
+    "/home/tope/dev",
+    "/home/tope/work",
+    process.cwd().replace(/\/[^\/]+$/, ""), // parent of current dir
+  ];
+  for (const root of searchRoots) {
+    if (!fs.existsSync(root)) continue;
+    const candidate = require("node:path").join(root, name);
+    if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+/**
+ * Resolve the workspace/folder path for a VS Code: window.
+ * First tries to extract the workspace name from the window title and
+ * search common project directories. Falls back to /proc/<pid>/cmdline.
+ */
+export function getWorkspacePathFromPid(pid: number, windowTitle?: string): string | null {
+  // Try title-based resolution first (needed because all VS Code: windows
+  // on Linux share the same PID, so /proc/<pid>/cmdline is unreliable)
+  if (windowTitle) {
+    const name = extractWorkspaceNameFromTitle(windowTitle);
+    if (name) {
+      const path = findProjectPathByName(name);
+      if (path) return path;
+    }
+  }
+
+  // Fallback: read /proc/<pid>/cmdline
   try {
     const cmdline = fs.readFileSync(`/proc/${pid}/cmdline`, "utf-8");
     const args = cmdline.split("\0").filter((a) => a.trim());
-    // args[0] is the binary (e.g. /opt/visual-studio-code/code)
     for (let i = 1; i < args.length; i++) {
       const arg = args[i].trim();
       if (!arg) continue;
-      // Skip Electron flags
       if (arg.startsWith("--") || arg.startsWith("-")) continue;
-      // Skip extension server scripts
       if (arg.includes(".vscode/extensions/") && arg.endsWith(".js")) continue;
-      // Check it's an actual directory or .code-workspace file
       if (fs.existsSync(arg) && (fs.statSync(arg).isDirectory() || arg.endsWith(".code-workspace"))) {
         return arg;
       }
     }
-    return null;
   } catch {
-    return null;
+    /* ignore */
   }
+  return null;
 }
 
 /**
