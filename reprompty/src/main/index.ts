@@ -798,11 +798,13 @@ function writeServersRegistry(servers: ServerEntry[]) {
 function pruneDeadServers(): ServerEntry[] {
   const servers = readServersRegistry();
   const alive = servers.filter((s) => {
+    if (!s.pid || s.pid <= 0) return false;
     try {
       process.kill(s.pid, 0);
       return true;
-    } catch {
-      return false;
+    } catch (err: any) {
+      // EPERM = process exists but we lack permission to signal it → still alive
+      return err.code === 'EPERM';
     }
   });
   if (alive.length !== servers.length) {
