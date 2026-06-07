@@ -803,6 +803,15 @@ def get_auxiliary_bar_sash_position(ws: MinimalWebSocket) -> Optional[dict]:
 def cdp_drag_sash(ws: MinimalWebSocket, from_x: int, from_y: int, to_x: int, to_y: int):
     """Drag the sash from one position to another via CDP mouse events.
     Single instant move — matches Windows PowerShell behaviour."""
+    # Move physical cursor away from sash to avoid interference
+    # with synthetic CDP mouse events
+    try:
+        subprocess.run(
+            ["ydotool", "mousemove", "0", "0"],
+            capture_output=True, timeout=2
+        )
+    except Exception:
+        pass
     # Mouse pressed at sash
     cdp_send(ws, "Input.dispatchMouseEvent", {
         "type": "mousePressed",

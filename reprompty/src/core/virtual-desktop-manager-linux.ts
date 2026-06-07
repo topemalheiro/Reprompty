@@ -738,8 +738,9 @@ export async function moveWindowToVirtualDesktop(
           error: `wmctrl failed and kdotool could not find window for handle ${windowHandle}`,
         };
       }
+      // kdotool uses 1-based desktop numbers; our indices are 0-based
       execSync(
-        `"${getKdotoolPath()}" set_desktop_for_window ${kdotoolHandle} ${resolved.desktop.index}`,
+        `"${getKdotoolPath()}" set_desktop_for_window ${kdotoolHandle} ${resolved.desktop.index + 1}`,
         { encoding: "utf-8", timeout: 5000 }
       );
       moved = true;

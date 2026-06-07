@@ -357,6 +357,8 @@ export class LayoutManager {
         target.windowHandle > 0
       ) {
         fullArgs.push(IS_WINDOWS ? "-WindowHandle" : "--window-handle", String(target.windowHandle));
+      } else if (!IS_WINDOWS && target.kdotoolHandle) {
+        fullArgs.push("--window-handle", target.kdotoolHandle);
       } else if (target.windowTitle) {
         fullArgs.push(IS_WINDOWS ? "-WindowTitle" : "--window-title", target.windowTitle);
       }

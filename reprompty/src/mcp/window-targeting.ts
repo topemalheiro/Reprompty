@@ -27,8 +27,22 @@ export function findNewWindowCandidates(
   baselineWindows: DetectedWindow[],
   currentWindows: DetectedWindow[]
 ): DetectedWindow[] {
-  const baselineHandles = new Set(baselineWindows.map((window) => window.handle));
-  return currentWindows.filter((window) => !baselineHandles.has(window.handle));
+  const baselineKeys = new Set(
+    baselineWindows.map((window) => {
+      // On Linux/Wayland, VS Code: windows share the same PID handle but have
+      // unique kdotool UUID handles. Use both for reliable identity.
+      if (window.kdotoolHandle) {
+        return `${window.handle}:${window.kdotoolHandle}`;
+      }
+      return String(window.handle);
+    })
+  );
+  return currentWindows.filter((window) => {
+    const key = window.kdotoolHandle
+      ? `${window.handle}:${window.kdotoolHandle}`
+      : String(window.handle);
+    return !baselineKeys.has(key);
+  });
 }
 
 export function selectUniqueWindowByTitle(
