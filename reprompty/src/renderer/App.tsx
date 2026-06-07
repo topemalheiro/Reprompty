@@ -100,7 +100,7 @@ interface ElectronAPI {
   llamaDeletePreset: (name: string) => Promise<boolean>;
   llamaStart: (presetName: string) => Promise<{ success: boolean; pid?: number; port?: number; error?: string }>;
   llamaStop: () => Promise<{ success: boolean }>;
-  llamaStatus: () => Promise<{ running: boolean; pid?: number; port?: number; preset?: string }>;
+  llamaStatus: () => Promise<{ running: boolean; pid?: number; port?: number; preset?: string; logPath?: string }>;
   llamaGetBinaryPath: () => Promise<string | null>;
   llamaSetBinaryPath: (path: string) => Promise<boolean>;
 
@@ -111,6 +111,8 @@ interface ElectronAPI {
 
   // Generic MCP tool runner
   runMcpTool: (toolName: string, args?: Record<string, unknown>) => Promise<string>;
+
+  openPath: (path: string) => Promise<string>;
 }
 
 declare global {

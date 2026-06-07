@@ -82,4 +82,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // Generic MCP tool runner (for save/load task presets, etc.)
   runMcpTool: (toolName: string, args?: Record<string, unknown>) =>
     ipcRenderer.invoke("run-mcp-tool", toolName, args || {}),
+
+  openPath: (path: string) => ipcRenderer.invoke("open-path", path),
 });

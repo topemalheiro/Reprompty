@@ -321,14 +321,18 @@ electron.app.whenReady().then(() => {
           if (preset.gpuLayers) args.push("-ngl", String(preset.gpuLayers));
           if (preset.chatTemplate) args.push("--chat-template", preset.chatTemplate);
           if (preset.extraArgs) args.push(...preset.extraArgs.split(/\s+/).filter(Boolean));
-          const proc = spawn(binary, args, { detached: true, stdio: "ignore" });
+          const logPath = nodePath.join(LLAMA_LOGS_DIR, `${presetName}-${Date.now()}.log`);
+          const logFd = fs.openSync(logPath, "a");
+          const proc = spawn(binary, args, { detached: true, stdio: ["ignore", logFd, logFd] });
           proc.unref();
+          fs.closeSync(logFd);
           const servers = readServersRegistry();
           servers.push({
             pid: proc.pid!,
             port: preset.port || 8080,
             preset: presetName,
             startedAt: new Date().toISOString(),
+            logPath,
           });
           writeServersRegistry(servers);
           console.log(`[Main] Auto-started '${presetName}' on port ${preset.port || 8080} (PID ${proc.pid})`);
@@ -757,6 +761,7 @@ const REPROMPTY_CONFIG_DIR = nodePath.join(os.homedir(), ".config", "reprompty")
 const LLAMA_PRESETS_DIR = nodePath.join(REPROMPTY_CONFIG_DIR, "llama-cpp-presets");
 const LLAMA_SERVERS_FILE = nodePath.join(REPROMPTY_CONFIG_DIR, "llama-servers.json");
 const LLAMA_CONFIG_FILE = nodePath.join(REPROMPTY_CONFIG_DIR, "llama-config.json");
+const LLAMA_LOGS_DIR = nodePath.join(REPROMPTY_CONFIG_DIR, "llama-logs");
 const GRAPHITI_COMPOSE_DIR = nodePath.join(os.homedir(), "Projects", "OS-Toolkit", "graphiti-mcp");
 
 function ensureConfigDir() {
@@ -765,6 +770,9 @@ function ensureConfigDir() {
   }
   if (!fs.existsSync(LLAMA_PRESETS_DIR)) {
     fs.mkdirSync(LLAMA_PRESETS_DIR, { recursive: true });
+  }
+  if (!fs.existsSync(LLAMA_LOGS_DIR)) {
+    fs.mkdirSync(LLAMA_LOGS_DIR, { recursive: true });
   }
 }
 
@@ -777,6 +785,7 @@ interface ServerEntry {
   port: number;
   preset: string;
   startedAt: string;
+  logPath?: string;
 }
 
 function readServersRegistry(): ServerEntry[] {
@@ -1059,11 +1068,14 @@ electron.ipcMain.handle("llama-start", async (_event: any, presetName: string) =
   if (preset.chatTemplate) args.push("--chat-template", preset.chatTemplate);
   if (preset.extraArgs) args.push(...preset.extraArgs.split(/\s+/).filter(Boolean));
 
+  const logPath = nodePath.join(LLAMA_LOGS_DIR, `${presetName}-${Date.now()}.log`);
+  const logFd = fs.openSync(logPath, "a");
   const proc = spawn(binary, args, {
     detached: true,
-    stdio: "ignore",
+    stdio: ["ignore", logFd, logFd],
   });
   proc.unref();
+  fs.closeSync(logFd);
 
   const servers = readServersRegistry();
   servers.push({
@@ -1071,6 +1083,7 @@ electron.ipcMain.handle("llama-start", async (_event: any, presetName: string) =
     port: preset.port || 8080,
     preset: presetName,
     startedAt: new Date().toISOString(),
+    logPath,
   });
   writeServersRegistry(servers);
 
@@ -1098,10 +1111,10 @@ electron.ipcMain.handle("llama-stop-preset", async (_event: any, presetName: str
 electron.ipcMain.handle("llama-status", async () => {
   // Return raw registry without pruning — pruning happens on start/stop actions
   const servers = readServersRegistry();
-  const result: Array<{ running: boolean; pid: number; port: number; preset: string }> = [];
+  const result: Array<{ running: boolean; pid: number; port: number; preset: string; logPath?: string }> = [];
   for (const s of servers) {
     const alive = isProcessAlive(s);
-    result.push({ running: alive, pid: s.pid, port: s.port, preset: s.preset });
+    result.push({ running: alive, pid: s.pid, port: s.port, preset: s.preset, logPath: s.logPath });
     if (!alive) {
       console.log(`[Llama] Status check found dead server: ${s.preset} (PID ${s.pid}, port ${s.port})`);
     }
@@ -1182,6 +1195,11 @@ electron.ipcMain.handle("graphiti-status", async () => {
       resolve({ running });
     });
   });
+});
+
+electron.ipcMain.handle("open-path", async (_event, filePath: string) => {
+  const result = await electron.shell.openPath(filePath);
+  return result;
 });
 
 // Allow self-signed certificates for local Portainer
