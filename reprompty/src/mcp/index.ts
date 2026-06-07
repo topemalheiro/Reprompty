@@ -30,6 +30,7 @@ import {
   detectWindows,
   detectAllWindows,
   getCdpPort,
+  executeCommandForeground,
   type DetectedWindow,
 } from "../platform/index.js";
 import { sendViaAgentCdp, isCdpAvailable } from "../core/cdp-client.js";
@@ -403,6 +404,24 @@ const BUILT_IN_TOOLS: MCPTool[] = [
         },
       },
       required: ["name"],
+    },
+  },
+  {
+    name: "duplicate_workspace_in_new_window",
+    description:
+      "Duplicate the current workspace as a new VS Code: window. Focuses the target window, opens the Command Palette, and executes 'Workspaces: Duplicate As Workspace in New Window'.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        windowTitle: {
+          type: "string",
+          description: "Window title substring to identify the target VS Code: window",
+        },
+        folderPath: {
+          type: "string",
+          description: "Folder path substring to identify the target VS Code: window",
+        },
+      },
     },
   },
 ];
@@ -1534,6 +1553,45 @@ export async function callTool(
       return textResult(
         JSON.stringify(result, null, 2),
         !result.success
+      );
+    }
+
+    case "duplicate_workspace_in_new_window": {
+      const windows = await detectWindows();
+      const windowTitle =
+        typeof args.windowTitle === "string" ? args.windowTitle.trim() : "";
+      const folderPath =
+        typeof args.folderPath === "string" ? args.folderPath.trim() : "";
+
+      const target = windows.find((w) => {
+        if (windowTitle && w.title.includes(windowTitle)) return true;
+        if (folderPath && w.folderPath.includes(folderPath)) return true;
+        return false;
+      });
+
+      if (!target) {
+        return textResult(
+          `No matching VS Code: window found. ` +
+            (windowTitle ? `windowTitle="${windowTitle}" ` : "") +
+            (folderPath ? `folderPath="${folderPath}"` : ""),
+          true
+        );
+      }
+
+      const handle = target.kdotoolHandle
+        ? parseInt(target.kdotoolHandle, 10)
+        : target.handle;
+
+      const success = await executeCommandForeground(
+        handle,
+        "Workspaces: Duplicate As Workspace in New Window"
+      );
+
+      return textResult(
+        success
+          ? `Duplicated workspace from "${target.title}" as new window`
+          : `Failed to duplicate workspace for "${target.title}"`,
+        !success
       );
     }
 
