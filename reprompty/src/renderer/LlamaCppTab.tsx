@@ -115,7 +115,7 @@ export default function LlamaCppTab() {
   };
 
   const isRunning = (presetName: string) =>
-    statuses.some((s) => s.preset === presetName);
+    statuses.some((s) => s.preset === presetName && s.running);
 
   const handleStart = async () => {
     if (!selectedPreset) {
@@ -239,9 +239,9 @@ export default function LlamaCppTab() {
     <div style={styles.panel}>
       <div style={styles.headerRow}>
         <h2 style={styles.panelTitle}>Llama.cpp Local Models</h2>
-        {statuses.length > 0 && (
+        {statuses.filter((s) => s.running).length > 0 && (
           <span style={styles.runningBadge}>
-            ● {statuses.length} model{statuses.length > 1 ? "s" : ""} running
+            ● {statuses.filter((s) => s.running).length} model{statuses.filter((s) => s.running).length > 1 ? "s" : ""} running
           </span>
         )}
       </div>
@@ -283,7 +283,7 @@ export default function LlamaCppTab() {
         <button
           style={styles.secondaryBtn}
           onClick={handleStopAll}
-          disabled={statuses.length === 0}
+          disabled={statuses.filter((s) => s.running).length === 0}
         >
           Stop All
         </button>
@@ -300,10 +300,10 @@ export default function LlamaCppTab() {
 
       {/* Active Model Rows */}
       <div style={styles.rowsContainer}>
-        {statuses.length === 0 && (
+        {statuses.filter((s) => s.running).length === 0 && (
           <div style={styles.emptyRow}>No models running</div>
         )}
-        {statuses.map((s) => (
+        {statuses.filter((s) => s.running).map((s) => (
           <div key={s.preset} style={styles.row}>
             <div style={styles.rowLeft}>
               <span style={styles.rowDot}>●</span>
@@ -530,8 +530,8 @@ export default function LlamaCppTab() {
       {/* Aperant integration hint */}
       <div style={styles.hintBox}>
         <b>💡 Aperant-MCP Integration:</b> Start a preset, then in Aperant-MCP add an API profile with Base URL{" "}
-        <code>http://localhost:{statuses[0]?.port || 8080}/v1</code> and API Key <code>dummy</code>.
-        {statuses.length > 1 && " Multiple models are running — use the port shown on each row above."}
+        <code>http://localhost:{statuses.find((s) => s.running)?.port || 8080}/v1</code> and API Key <code>dummy</code>.
+        {statuses.filter((s) => s.running).length > 1 && " Multiple models are running — use the port shown on each row above."}
       </div>
     </div>
   );

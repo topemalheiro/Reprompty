@@ -751,6 +751,7 @@ electron.ipcMain.handle("portainer-fetch", async (_event: any, method: string, u
 
 import os from "node:os";
 import { spawn, exec } from "node:child_process";
+import net from "node:net";
 
 const REPROMPTY_CONFIG_DIR = nodePath.join(os.homedir(), ".config", "reprompty");
 const LLAMA_PRESETS_DIR = nodePath.join(REPROMPTY_CONFIG_DIR, "llama-cpp-presets");
@@ -795,19 +796,48 @@ function writeServersRegistry(servers: ServerEntry[]) {
   fs.writeFileSync(LLAMA_SERVERS_FILE, JSON.stringify(servers, null, 2));
 }
 
+function isPortListening(port: number): boolean {
+  try {
+    const conn = net.createConnection({ port, host: "127.0.0.1" });
+    conn.destroy();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isProcessAlive(entry: ServerEntry): boolean {
+  if (!entry.pid || entry.pid <= 0) {
+    // Fallback: check port if PID is invalid
+    return isPortListening(entry.port);
+  }
+  try {
+    process.kill(entry.pid, 0);
+    return true;
+  } catch (err: any) {
+    if (err.code === 'EPERM') {
+      // Process exists but no signal permission → alive
+      return true;
+    }
+    // ESRCH or other error → process is dead, but verify via port just in case
+    return isPortListening(entry.port);
+  }
+}
+
 function pruneDeadServers(): ServerEntry[] {
   const servers = readServersRegistry();
-  const alive = servers.filter((s) => {
-    if (!s.pid || s.pid <= 0) return false;
-    try {
-      process.kill(s.pid, 0);
-      return true;
-    } catch (err: any) {
-      // EPERM = process exists but we lack permission to signal it → still alive
-      return err.code === 'EPERM';
+  const alive: ServerEntry[] = [];
+  const dead: ServerEntry[] = [];
+  for (const s of servers) {
+    if (isProcessAlive(s)) {
+      alive.push(s);
+    } else {
+      dead.push(s);
+      console.log(`[Llama] Pruned dead server: ${s.preset} (PID ${s.pid}, port ${s.port})`);
     }
-  });
-  if (alive.length !== servers.length) {
+  }
+  if (dead.length > 0) {
+    console.log(`[Llama] Pruned ${dead.length} dead server(s), ${alive.length} remaining`);
     writeServersRegistry(alive);
   }
   return alive;
@@ -1066,8 +1096,17 @@ electron.ipcMain.handle("llama-stop-preset", async (_event: any, presetName: str
 });
 
 electron.ipcMain.handle("llama-status", async () => {
-  const servers = pruneDeadServers();
-  return servers.map((s) => ({ running: true, pid: s.pid, port: s.port, preset: s.preset }));
+  // Return raw registry without pruning — pruning happens on start/stop actions
+  const servers = readServersRegistry();
+  const result: Array<{ running: boolean; pid: number; port: number; preset: string }> = [];
+  for (const s of servers) {
+    const alive = isProcessAlive(s);
+    result.push({ running: alive, pid: s.pid, port: s.port, preset: s.preset });
+    if (!alive) {
+      console.log(`[Llama] Status check found dead server: ${s.preset} (PID ${s.pid}, port ${s.port})`);
+    }
+  }
+  return result;
 });
 
 electron.ipcMain.handle("llama-get-autostart", async () => {
