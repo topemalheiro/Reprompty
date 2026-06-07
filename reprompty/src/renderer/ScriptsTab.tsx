@@ -76,6 +76,10 @@ const BUILT_IN_MCP_TOOLS = [
     name: "apply_layout",
     description: "Apply a saved layout slot to the active or targeted window.",
   },
+  {
+    name: "duplicate_workspace_in_new_window",
+    description: "Duplicate the current workspace as a new VS Code: window. Optionally apply a layout slot.",
+  },
 ];
 
 function detectTypeFromPath(filePath: string): string {
