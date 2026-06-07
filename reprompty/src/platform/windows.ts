@@ -347,6 +347,15 @@ export async function executeCommandForeground(
   return false;
 }
 
+/**
+ * Stub for getWorkspacePathFromPid on Windows.
+ * Not yet implemented — returns null.
+ */
+export function getWorkspacePathFromPid(_pid: number): string | null {
+  console.warn("[getWorkspacePathFromPid] Not implemented on Windows");
+  return null;
+}
+
 // ============================================================================
 // WINDOW AUTO-DETECTION
 // ============================================================================

@@ -518,9 +518,38 @@ export function listWindows(): WindowInfo[] {
  * On X11 uses xdotool. On Wayland uses kdotool windowactivate + wl-copy + wtype/ydotool.
  */
 /**
+ * Read the workspace/folder path from a VS Code: process's command line.
+ * Reads /proc/<pid>/cmdline and returns the first non-binary argument
+ * that looks like a folder or .code-workspace file.
+ */
+export function getWorkspacePathFromPid(pid: number): string | null {
+  try {
+    const cmdline = fs.readFileSync(`/proc/${pid}/cmdline`, "utf-8");
+    const args = cmdline.split("\0").filter((a) => a.trim());
+    // args[0] is the binary (e.g. /opt/visual-studio-code/code)
+    for (let i = 1; i < args.length; i++) {
+      const arg = args[i].trim();
+      if (!arg) continue;
+      // Skip Electron flags
+      if (arg.startsWith("--") || arg.startsWith("-")) continue;
+      // Skip extension server scripts
+      if (arg.includes(".vscode/extensions/") && arg.endsWith(".js")) continue;
+      // Check it's an actual directory or .code-workspace file
+      if (fs.existsSync(arg) && (fs.statSync(arg).isDirectory() || arg.endsWith(".code-workspace"))) {
+        return arg;
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Execute a VS Code: command via the Command Palette using foreground key simulation.
  * On Wayland uses kdotool windowactivate + wtype/ydotool.
  * On X11 uses xdotool.
+ * @deprecated Use background methods (CLI spawn or CDP) instead.
  */
 export async function executeCommandForeground(
   windowHandle: number,
