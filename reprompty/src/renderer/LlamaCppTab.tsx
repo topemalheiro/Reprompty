@@ -18,6 +18,7 @@ interface Preset {
   maxTokens: number;
   chatTemplate: string;
   extraArgs: string;
+  autostart?: boolean;
 }
 
 interface ServerStatus {
@@ -45,12 +46,20 @@ const DEFAULT_PRESET: Preset = {
   maxTokens: -1,
   chatTemplate: "",
   extraArgs: "",
+  autostart: false,
+};
+
+const TYPE_COLORS: Record<string, string> = {
+  chat: "#4a9eff",
+  embedding: "#ffaa44",
+  voice: "#ff66aa",
 };
 
 export default function LlamaCppTab() {
   const [presets, setPresets] = useState<string[]>([]);
   const [selectedPreset, setSelectedPreset] = useState<string>("");
-  const [status, setStatus] = useState<ServerStatus>({ running: false });
+  const [statuses, setStatuses] = useState<ServerStatus[]>([]);
+  const [autostartList, setAutostartList] = useState<string[]>([]);
   const [editing, setEditing] = useState(false);
   const [editorPreset, setEditorPreset] = useState<Preset>(DEFAULT_PRESET);
   const [editorOriginalName, setEditorOriginalName] = useState<string>("");
@@ -61,6 +70,7 @@ export default function LlamaCppTab() {
     loadPresets();
     checkStatus();
     checkBinary();
+    loadAutostart();
     const interval = setInterval(checkStatus, 3000);
     return () => clearInterval(interval);
   }, []);
@@ -80,9 +90,9 @@ export default function LlamaCppTab() {
   const checkStatus = async () => {
     try {
       const s = await window.electronAPI.llamaStatus();
-      setStatus(s);
+      setStatuses(Array.isArray(s) ? s : []);
     } catch {
-      setStatus({ running: false });
+      setStatuses([]);
     }
   };
 
@@ -95,16 +105,28 @@ export default function LlamaCppTab() {
     }
   };
 
+  const loadAutostart = async () => {
+    try {
+      const list = await window.electronAPI.llamaGetAutostart();
+      setAutostartList(Array.isArray(list) ? list : []);
+    } catch {
+      setAutostartList([]);
+    }
+  };
+
+  const isRunning = (presetName: string) =>
+    statuses.some((s) => s.preset === presetName);
+
   const handleStart = async () => {
     if (!selectedPreset) {
       setMessage("Select a preset first");
       return;
     }
-    setMessage("Starting llama-server...");
+    setMessage(`Starting ${selectedPreset}...`);
     try {
       const result = await window.electronAPI.llamaStart(selectedPreset);
       if (result.success) {
-        setMessage(`Started on port ${result.port} (PID ${result.pid})`);
+        setMessage(`Started ${selectedPreset} on port ${result.port} (PID ${result.pid})`);
         checkStatus();
       } else {
         setMessage(`Start failed: ${result.error}`);
@@ -114,19 +136,29 @@ export default function LlamaCppTab() {
     }
   };
 
-  const handleStop = async () => {
-    setMessage("Stopping llama-server...");
+  const handleStopAll = async () => {
+    setMessage("Stopping all llama-servers...");
     try {
       await window.electronAPI.llamaStop();
-      setMessage("Stopped");
+      setMessage("All servers stopped");
       checkStatus();
     } catch (err) {
       setMessage(`Error: ${err}`);
     }
   };
 
-  const handleOpenUI = () => {
-    const port = status.port || 8080;
+  const handleStopPreset = async (presetName: string) => {
+    setMessage(`Stopping ${presetName}...`);
+    try {
+      await window.electronAPI.llamaStopPreset(presetName);
+      setMessage(`${presetName} stopped`);
+      checkStatus();
+    } catch (err) {
+      setMessage(`Error: ${err}`);
+    }
+  };
+
+  const handleOpenUI = (port: number) => {
     window.open(`http://localhost:${port}`, "_blank");
   };
 
@@ -142,7 +174,9 @@ export default function LlamaCppTab() {
     try {
       const data = await window.electronAPI.llamaLoadPreset(selectedPreset);
       if (data) {
-        setEditorPreset(data as Preset);
+        const preset = data as Preset;
+        preset.autostart = autostartList.includes(selectedPreset);
+        setEditorPreset(preset);
         setEditorOriginalName(selectedPreset);
         setEditing(true);
         setMessage("");
@@ -176,10 +210,15 @@ export default function LlamaCppTab() {
       return;
     }
     try {
-      await window.electronAPI.llamaSavePreset(name, editorPreset);
+      // Persist autostart separately from preset JSON
+      await window.electronAPI.llamaSetAutostart(name, !!editorPreset.autostart);
+      // Remove autostart field before saving preset JSON
+      const { autostart: _, ...presetData } = editorPreset;
+      await window.electronAPI.llamaSavePreset(name, presetData);
       setMessage(`Saved preset '${name}'`);
       setEditing(false);
       loadPresets();
+      loadAutostart();
       setSelectedPreset(name);
     } catch (err) {
       setMessage(`Save failed: ${err}`);
@@ -187,7 +226,6 @@ export default function LlamaCppTab() {
   };
 
   const handlePickModel = async () => {
-    // Use a simple prompt for now since Reprompty doesn't have a file picker exposed for this
     const path = prompt("Enter full path to .gguf model:", editorPreset.modelPath);
     if (path !== null) {
       setEditorPreset({ ...editorPreset, modelPath: path });
@@ -206,9 +244,9 @@ export default function LlamaCppTab() {
     <div style={styles.panel}>
       <div style={styles.headerRow}>
         <h2 style={styles.panelTitle}>Llama.cpp Local Models</h2>
-        {status.running && (
+        {statuses.length > 0 && (
           <span style={styles.runningBadge}>
-            ● Running {status.preset} on port {status.port}
+            ● {statuses.length} model{statuses.length > 1 ? "s" : ""} running
           </span>
         )}
       </div>
@@ -223,9 +261,7 @@ export default function LlamaCppTab() {
         </div>
       )}
 
-      {message && (
-        <div style={styles.infoBanner}>{message}</div>
-      )}
+      {message && <div style={styles.infoBanner}>{message}</div>}
 
       {/* Controls */}
       <div style={styles.controlRow}>
@@ -237,19 +273,24 @@ export default function LlamaCppTab() {
           <option value="">Select a preset...</option>
           {presets.map((p) => (
             <option key={p} value={p}>
-              {p}
+              {p} {isRunning(p) ? "●" : ""} {autostartList.includes(p) ? "🚀" : ""}
             </option>
           ))}
         </select>
 
-        <button style={styles.btn} onClick={handleStart} disabled={!binaryPath || status.running}>
+        <button
+          style={styles.btn}
+          onClick={handleStart}
+          disabled={!binaryPath || !selectedPreset || isRunning(selectedPreset)}
+        >
           Start
         </button>
-        <button style={styles.secondaryBtn} onClick={handleStop} disabled={!status.running}>
-          Stop
-        </button>
-        <button style={styles.secondaryBtn} onClick={handleOpenUI} disabled={!status.running}>
-          Open UI
+        <button
+          style={styles.secondaryBtn}
+          onClick={handleStopAll}
+          disabled={statuses.length === 0}
+        >
+          Stop All
         </button>
         <button style={styles.secondaryBtn} onClick={handleNew}>
           New Preset
@@ -260,6 +301,52 @@ export default function LlamaCppTab() {
         <button style={styles.dangerBtn} onClick={handleDelete} disabled={!selectedPreset}>
           Delete
         </button>
+      </div>
+
+      {/* Active Model Cards */}
+      <div style={styles.cardsContainer}>
+        {statuses.length === 0 && (
+          <div style={styles.emptyState}>No models running</div>
+        )}
+        {statuses.map((s) => (
+          <div key={s.preset} style={styles.card}>
+            <div style={styles.cardHeader}>
+              <span style={styles.cardTitle}>{s.preset}</span>
+              <span
+                style={{
+                  ...styles.typeBadge,
+                  background: TYPE_COLORS[getPresetType(s.preset)] || "#666",
+                }}
+              >
+                {getPresetType(s.preset)}
+              </span>
+            </div>
+            <div style={styles.cardBody}>
+              <div style={styles.cardField}>
+                <span style={styles.cardLabel}>Port</span>
+                <span style={styles.cardValue}>{s.port}</span>
+              </div>
+              <div style={styles.cardField}>
+                <span style={styles.cardLabel}>PID</span>
+                <span style={styles.cardValue}>{s.pid}</span>
+              </div>
+            </div>
+            <div style={styles.cardActions}>
+              <button
+                style={styles.cardBtn}
+                onClick={() => s.port && handleOpenUI(s.port)}
+              >
+                Open UI
+              </button>
+              <button
+                style={styles.cardStopBtn}
+                onClick={() => s.preset && handleStopPreset(s.preset)}
+              >
+                Stop
+              </button>
+            </div>
+          </div>
+        ))}
       </div>
 
       {/* Preset Editor */}
@@ -419,6 +506,16 @@ export default function LlamaCppTab() {
               onChange={(e) => setEditorPreset({ ...editorPreset, extraArgs: e.target.value })}
               placeholder="e.g., --flash-attn --mlock"
             />
+
+            <label style={styles.label}>Launch on startup</label>
+            <label style={styles.checkboxLabel}>
+              <input
+                type="checkbox"
+                checked={!!editorPreset.autostart}
+                onChange={(e) => setEditorPreset({ ...editorPreset, autostart: e.target.checked })}
+              />
+              Start this model automatically when Reprompty opens
+            </label>
           </div>
 
           <div style={styles.editorActions}>
@@ -435,10 +532,19 @@ export default function LlamaCppTab() {
       {/* Aperant integration hint */}
       <div style={styles.hintBox}>
         <b>💡 Aperant-MCP Integration:</b> Start a preset, then in Aperant-MCP add an API profile with Base URL{" "}
-        <code>http://localhost:{status.port || 8080}/v1</code> and API Key <code>dummy</code>.
+        <code>http://localhost:{statuses[0]?.port || 8080}/v1</code> and API Key <code>dummy</code>.
+        {statuses.length > 1 && " Multiple models are running — use the port shown on each card above."}
       </div>
     </div>
   );
+}
+
+// Helper to guess preset type from preset data (we load it on demand for the card)
+function getPresetType(presetName: string | undefined): string {
+  if (!presetName) return "chat";
+  if (presetName.includes("embedding")) return "embedding";
+  if (presetName.includes("vocal") || presetName.includes("voice") || presetName.includes("tts")) return "voice";
+  return "chat";
 }
 
 const styles: Record<string, React.CSSProperties> = {
@@ -543,6 +649,97 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: "13px",
     padding: 0,
   },
+  cardsContainer: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "12px",
+    marginBottom: "16px",
+    flexShrink: 0,
+  },
+  emptyState: {
+    padding: "20px",
+    color: "#888",
+    fontSize: "13px",
+    fontStyle: "italic",
+    width: "100%",
+    textAlign: "center",
+  },
+  card: {
+    background: "#252525",
+    border: "1px solid #3d3d3d",
+    borderRadius: "8px",
+    padding: "12px 14px",
+    minWidth: "180px",
+    maxWidth: "240px",
+    flex: "1 1 180px",
+    display: "flex",
+    flexDirection: "column",
+    gap: "8px",
+  },
+  cardHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: "8px",
+  },
+  cardTitle: {
+    fontWeight: 600,
+    fontSize: "14px",
+    color: "#eee",
+    wordBreak: "break-word",
+  },
+  typeBadge: {
+    fontSize: "10px",
+    fontWeight: 600,
+    color: "#fff",
+    padding: "2px 6px",
+    borderRadius: "4px",
+    textTransform: "uppercase",
+    letterSpacing: "0.5px",
+    whiteSpace: "nowrap",
+  },
+  cardBody: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "4px",
+  },
+  cardField: {
+    display: "flex",
+    justifyContent: "space-between",
+    fontSize: "12px",
+  },
+  cardLabel: {
+    color: "#888",
+  },
+  cardValue: {
+    color: "#ccc",
+    fontFamily: "monospace",
+  },
+  cardActions: {
+    display: "flex",
+    gap: "6px",
+    marginTop: "4px",
+  },
+  cardBtn: {
+    flex: 1,
+    padding: "6px 10px",
+    background: "#333",
+    border: "1px solid #4a4a4a",
+    borderRadius: "4px",
+    color: "#eee",
+    cursor: "pointer",
+    fontSize: "11px",
+  },
+  cardStopBtn: {
+    flex: 1,
+    padding: "6px 10px",
+    background: "#553333",
+    border: "1px solid #884444",
+    borderRadius: "4px",
+    color: "#ff8888",
+    cursor: "pointer",
+    fontSize: "11px",
+  },
   editorPanel: {
     background: "#252525",
     borderRadius: "8px",
@@ -566,6 +763,14 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: "12px",
     color: "#aaa",
     textAlign: "right",
+  },
+  checkboxLabel: {
+    fontSize: "12px",
+    color: "#ccc",
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    cursor: "pointer",
   },
   input: {
     padding: "5px 8px",

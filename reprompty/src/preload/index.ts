@@ -67,9 +67,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
   llamaDeletePreset: (name: string) => ipcRenderer.invoke("llama-delete-preset", name),
   llamaStart: (presetName: string) => ipcRenderer.invoke("llama-start", presetName),
   llamaStop: () => ipcRenderer.invoke("llama-stop"),
+  llamaStopPreset: (presetName: string) => ipcRenderer.invoke("llama-stop-preset", presetName),
   llamaStatus: () => ipcRenderer.invoke("llama-status"),
   llamaGetBinaryPath: () => ipcRenderer.invoke("llama-get-binary-path"),
   llamaSetBinaryPath: (path: string) => ipcRenderer.invoke("llama-set-binary-path", path),
+  llamaGetAutostart: () => ipcRenderer.invoke("llama-get-autostart"),
+  llamaSetAutostart: (presetName: string, enabled: boolean) => ipcRenderer.invoke("llama-set-autostart", presetName, enabled),
 
   // Graphiti MCP control
   graphitiStart: () => ipcRenderer.invoke("graphiti-start"),
