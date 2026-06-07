@@ -63,7 +63,7 @@ export default function LlamaCppTab() {
   const [editing, setEditing] = useState(false);
   const [editorPreset, setEditorPreset] = useState<Preset>(DEFAULT_PRESET);
   const [editorOriginalName, setEditorOriginalName] = useState<string>("");
-  const [message, setMessage] = useState<string>("");
+  const [errorMessage, setErrorMessage] = useState<string>("");
   const [binaryPath, setBinaryPath] = useState<string | null>(null);
 
   useEffect(() => {
@@ -83,7 +83,7 @@ export default function LlamaCppTab() {
         setSelectedPreset(list[0]);
       }
     } catch (err) {
-      setMessage(`Failed to load presets: ${err}`);
+      setErrorMessage(`Failed to load presets: ${err}`);
     }
   };
 
@@ -119,42 +119,39 @@ export default function LlamaCppTab() {
 
   const handleStart = async () => {
     if (!selectedPreset) {
-      setMessage("Select a preset first");
+      setErrorMessage("Select a preset first");
       return;
     }
-    setMessage(`Starting ${selectedPreset}...`);
+    setErrorMessage("");
     try {
       const result = await window.electronAPI.llamaStart(selectedPreset);
       if (result.success) {
-        setMessage(`Started ${selectedPreset} on port ${result.port} (PID ${result.pid})`);
         checkStatus();
       } else {
-        setMessage(`Start failed: ${result.error}`);
+        setErrorMessage(`Start failed: ${result.error}`);
       }
     } catch (err) {
-      setMessage(`Error: ${err}`);
+      setErrorMessage(`Error: ${err}`);
     }
   };
 
   const handleStopAll = async () => {
-    setMessage("Stopping all llama-servers...");
+    setErrorMessage("");
     try {
       await window.electronAPI.llamaStop();
-      setMessage("All servers stopped");
       checkStatus();
     } catch (err) {
-      setMessage(`Error: ${err}`);
+      setErrorMessage(`Error: ${err}`);
     }
   };
 
   const handleStopPreset = async (presetName: string) => {
-    setMessage(`Stopping ${presetName}...`);
+    setErrorMessage("");
     try {
       await window.electronAPI.llamaStopPreset(presetName);
-      setMessage(`${presetName} stopped`);
       checkStatus();
     } catch (err) {
-      setMessage(`Error: ${err}`);
+      setErrorMessage(`Error: ${err}`);
     }
   };
 
@@ -166,7 +163,7 @@ export default function LlamaCppTab() {
     setEditorPreset({ ...DEFAULT_PRESET, name: "new-preset" });
     setEditorOriginalName("");
     setEditing(true);
-    setMessage("");
+    setErrorMessage("");
   };
 
   const handleEdit = async () => {
@@ -179,10 +176,10 @@ export default function LlamaCppTab() {
         setEditorPreset(preset);
         setEditorOriginalName(selectedPreset);
         setEditing(true);
-        setMessage("");
+        setErrorMessage("");
       }
     } catch (err) {
-      setMessage(`Failed to load preset: ${err}`);
+      setErrorMessage(`Failed to load preset: ${err}`);
     }
   };
 
@@ -191,37 +188,35 @@ export default function LlamaCppTab() {
     if (!confirm(`Delete preset '${selectedPreset}'?`)) return;
     try {
       await window.electronAPI.llamaDeletePreset(selectedPreset);
-      setMessage(`Deleted '${selectedPreset}'`);
+      setErrorMessage(`Deleted '${selectedPreset}'`);
       setSelectedPreset("");
       loadPresets();
     } catch (err) {
-      setMessage(`Delete failed: ${err}`);
+      setErrorMessage(`Delete failed: ${err}`);
     }
   };
 
   const handleSaveEditor = async () => {
     const name = editorPreset.name.trim();
     if (!name) {
-      setMessage("Preset name is required");
+      setErrorMessage("Preset name is required");
       return;
     }
     if (!editorPreset.modelPath.trim()) {
-      setMessage("Model path is required");
+      setErrorMessage("Model path is required");
       return;
     }
     try {
-      // Persist autostart separately from preset JSON
       await window.electronAPI.llamaSetAutostart(name, !!editorPreset.autostart);
-      // Remove autostart field before saving preset JSON
       const { autostart: _, ...presetData } = editorPreset;
       await window.electronAPI.llamaSavePreset(name, presetData);
-      setMessage(`Saved preset '${name}'`);
+      setErrorMessage("");
       setEditing(false);
       loadPresets();
       loadAutostart();
       setSelectedPreset(name);
     } catch (err) {
-      setMessage(`Save failed: ${err}`);
+      setErrorMessage(`Save failed: ${err}`);
     }
   };
 
@@ -261,7 +256,7 @@ export default function LlamaCppTab() {
         </div>
       )}
 
-      {message && <div style={styles.infoBanner}>{message}</div>}
+      {errorMessage && <div style={styles.errorBanner}>{errorMessage}</div>}
 
       {/* Controls */}
       <div style={styles.controlRow}>
@@ -303,15 +298,16 @@ export default function LlamaCppTab() {
         </button>
       </div>
 
-      {/* Active Model Cards */}
-      <div style={styles.cardsContainer}>
+      {/* Active Model Rows */}
+      <div style={styles.rowsContainer}>
         {statuses.length === 0 && (
-          <div style={styles.emptyState}>No models running</div>
+          <div style={styles.emptyRow}>No models running</div>
         )}
         {statuses.map((s) => (
-          <div key={s.preset} style={styles.card}>
-            <div style={styles.cardHeader}>
-              <span style={styles.cardTitle}>{s.preset}</span>
+          <div key={s.preset} style={styles.row}>
+            <div style={styles.rowLeft}>
+              <span style={styles.rowDot}>●</span>
+              <span style={styles.rowTitle}>{s.preset}</span>
               <span
                 style={{
                   ...styles.typeBadge,
@@ -321,25 +317,27 @@ export default function LlamaCppTab() {
                 {getPresetType(s.preset)}
               </span>
             </div>
-            <div style={styles.cardBody}>
-              <div style={styles.cardField}>
-                <span style={styles.cardLabel}>Port</span>
-                <span style={styles.cardValue}>{s.port}</span>
-              </div>
-              <div style={styles.cardField}>
-                <span style={styles.cardLabel}>PID</span>
-                <span style={styles.cardValue}>{s.pid}</span>
-              </div>
+
+            <div style={styles.rowCenter}>
+              <span style={styles.rowField}>
+                <span style={styles.rowLabel}>Port</span>
+                <span style={styles.rowValue}>{s.port}</span>
+              </span>
+              <span style={styles.rowField}>
+                <span style={styles.rowLabel}>PID</span>
+                <span style={styles.rowValue}>{s.pid}</span>
+              </span>
             </div>
-            <div style={styles.cardActions}>
+
+            <div style={styles.rowRight}>
               <button
-                style={styles.cardBtn}
+                style={styles.rowBtn}
                 onClick={() => s.port && handleOpenUI(s.port)}
               >
                 Open UI
               </button>
               <button
-                style={styles.cardStopBtn}
+                style={styles.rowStopBtn}
                 onClick={() => s.preset && handleStopPreset(s.preset)}
               >
                 Stop
@@ -533,13 +531,12 @@ export default function LlamaCppTab() {
       <div style={styles.hintBox}>
         <b>💡 Aperant-MCP Integration:</b> Start a preset, then in Aperant-MCP add an API profile with Base URL{" "}
         <code>http://localhost:{statuses[0]?.port || 8080}/v1</code> and API Key <code>dummy</code>.
-        {statuses.length > 1 && " Multiple models are running — use the port shown on each card above."}
+        {statuses.length > 1 && " Multiple models are running — use the port shown on each row above."}
       </div>
     </div>
   );
 }
 
-// Helper to guess preset type from preset data (we load it on demand for the card)
 function getPresetType(presetName: string | undefined): string {
   if (!presetName) return "chat";
   if (presetName.includes("embedding")) return "embedding";
@@ -586,12 +583,12 @@ const styles: Record<string, React.CSSProperties> = {
     marginBottom: "12px",
     flexShrink: 0,
   },
-  infoBanner: {
+  errorBanner: {
     padding: "8px 12px",
-    background: "#113322",
-    border: "1px solid #226644",
+    background: "#331111",
+    border: "1px solid #662222",
     borderRadius: "4px",
-    color: "#44ff88",
+    color: "#ff6666",
     fontSize: "13px",
     marginBottom: "12px",
     flexShrink: 0,
@@ -649,96 +646,108 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: "13px",
     padding: 0,
   },
-  cardsContainer: {
-    display: "flex",
-    flexWrap: "wrap",
-    gap: "12px",
-    marginBottom: "16px",
-    flexShrink: 0,
-  },
-  emptyState: {
-    padding: "20px",
-    color: "#888",
-    fontSize: "13px",
-    fontStyle: "italic",
-    width: "100%",
-    textAlign: "center",
-  },
-  card: {
-    background: "#252525",
-    border: "1px solid #3d3d3d",
-    borderRadius: "8px",
-    padding: "12px 14px",
-    minWidth: "180px",
-    maxWidth: "240px",
-    flex: "1 1 180px",
+  rowsContainer: {
     display: "flex",
     flexDirection: "column",
     gap: "8px",
+    marginBottom: "16px",
+    flexShrink: 0,
   },
-  cardHeader: {
+  emptyRow: {
+    padding: "14px 16px",
+    background: "#252525",
+    border: "1px dashed #444",
+    borderRadius: "6px",
+    color: "#777",
+    fontSize: "13px",
+    fontStyle: "italic",
+    width: "100%",
+  },
+  row: {
     display: "flex",
-    justifyContent: "space-between",
     alignItems: "center",
-    gap: "8px",
+    justifyContent: "space-between",
+    gap: "16px",
+    padding: "12px 16px",
+    background: "#252525",
+    border: "1px solid #3d3d3d",
+    borderRadius: "6px",
+    width: "100%",
+    boxSizing: "border-box",
   },
-  cardTitle: {
+  rowLeft: {
+    display: "flex",
+    alignItems: "center",
+    gap: "10px",
+    minWidth: 0,
+    flex: "1 1 auto",
+  },
+  rowDot: {
+    color: "#44ff44",
+    fontSize: "14px",
+    fontWeight: 700,
+  },
+  rowTitle: {
     fontWeight: 600,
     fontSize: "14px",
     color: "#eee",
-    wordBreak: "break-word",
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
   },
   typeBadge: {
     fontSize: "10px",
     fontWeight: 600,
     color: "#fff",
-    padding: "2px 6px",
+    padding: "2px 8px",
     borderRadius: "4px",
     textTransform: "uppercase",
     letterSpacing: "0.5px",
     whiteSpace: "nowrap",
   },
-  cardBody: {
+  rowCenter: {
     display: "flex",
-    flexDirection: "column",
-    gap: "4px",
+    alignItems: "center",
+    gap: "20px",
+    flexShrink: 0,
   },
-  cardField: {
+  rowField: {
     display: "flex",
-    justifyContent: "space-between",
+    alignItems: "center",
+    gap: "6px",
     fontSize: "12px",
   },
-  cardLabel: {
+  rowLabel: {
     color: "#888",
   },
-  cardValue: {
+  rowValue: {
     color: "#ccc",
     fontFamily: "monospace",
+    fontSize: "12px",
   },
-  cardActions: {
+  rowRight: {
     display: "flex",
-    gap: "6px",
-    marginTop: "4px",
+    alignItems: "center",
+    gap: "8px",
+    flexShrink: 0,
   },
-  cardBtn: {
-    flex: 1,
-    padding: "6px 10px",
+  rowBtn: {
+    padding: "6px 12px",
     background: "#333",
     border: "1px solid #4a4a4a",
     borderRadius: "4px",
     color: "#eee",
     cursor: "pointer",
-    fontSize: "11px",
+    fontSize: "12px",
   },
-  cardStopBtn: {
-    flex: 1,
-    padding: "6px 10px",
+  rowStopBtn: {
+    padding: "6px 12px",
     background: "#553333",
     border: "1px solid #884444",
     borderRadius: "4px",
     color: "#ff8888",
     cursor: "pointer",
-    fontSize: "11px",
+    fontSize: "12px",
   },
   editorPanel: {
     background: "#252525",
