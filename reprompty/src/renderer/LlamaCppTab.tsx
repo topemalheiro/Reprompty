@@ -26,6 +26,7 @@ interface ServerStatus {
   pid?: number;
   port?: number;
   preset?: string;
+  logPath?: string;
 }
 
 const DEFAULT_PRESET: Preset = {
@@ -300,7 +301,7 @@ export default function LlamaCppTab() {
 
       {/* Active Model Rows */}
       <div style={styles.rowsContainer}>
-        {statuses.filter((s) => s.running).length === 0 && (
+        {statuses.filter((s) => s.running).length === 0 && statuses.filter((s) => !s.running).length === 0 && (
           <div style={styles.emptyRow}>No models running</div>
         )}
         {statuses.filter((s) => s.running).map((s) => (
@@ -330,6 +331,15 @@ export default function LlamaCppTab() {
             </div>
 
             <div style={styles.rowRight}>
+              {s.logPath && (
+                <button
+                  style={styles.rowBtn}
+                  onClick={() => s.logPath && window.electronAPI.openPath && window.electronAPI.openPath(s.logPath)}
+                  title="Open log file"
+                >
+                  Log
+                </button>
+              )}
               <button
                 style={styles.rowBtn}
                 onClick={() => s.port && handleOpenUI(s.port)}
@@ -341,6 +351,44 @@ export default function LlamaCppTab() {
                 onClick={() => s.preset && handleStopPreset(s.preset)}
               >
                 Stop
+              </button>
+            </div>
+          </div>
+        ))}
+        {statuses.filter((s) => !s.running).map((s) => (
+          <div key={`dead-${s.preset}`} style={{ ...styles.row, border: "1px solid #553333", background: "#2a2020" }}>
+            <div style={styles.rowLeft}>
+              <span style={{ ...styles.rowDot, color: "#ff4444" }}>●</span>
+              <span style={styles.rowTitle}>{s.preset}</span>
+              <span style={{ ...styles.typeBadge, background: "#883333" }}>CRASHED</span>
+            </div>
+
+            <div style={styles.rowCenter}>
+              <span style={styles.rowField}>
+                <span style={styles.rowLabel}>Port</span>
+                <span style={styles.rowValue}>{s.port}</span>
+              </span>
+              <span style={styles.rowField}>
+                <span style={styles.rowLabel}>PID</span>
+                <span style={styles.rowValue}>{s.pid}</span>
+              </span>
+            </div>
+
+            <div style={styles.rowRight}>
+              {s.logPath && (
+                <button
+                  style={styles.rowBtn}
+                  onClick={() => s.logPath && window.electronAPI.openPath && window.electronAPI.openPath(s.logPath)}
+                  title="Open log file"
+                >
+                  View Log
+                </button>
+              )}
+              <button
+                style={styles.rowStopBtn}
+                onClick={() => s.preset && handleStopPreset(s.preset)}
+              >
+                Dismiss
               </button>
             </div>
           </div>
