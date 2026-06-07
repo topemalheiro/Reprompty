@@ -280,6 +280,67 @@ electron.app.whenReady().then(() => {
     console.error("[Main] Script auto-start failed:", err);
   }
 
+  // Auto-start Llama.cpp presets flagged for startup
+  try {
+    const config = readLlamaConfig();
+    const autostart = Array.isArray(config.autostart) ? (config.autostart as string[]) : [];
+    if (autostart.length > 0) {
+      console.log("[Main] Auto-starting Llama.cpp presets:", autostart);
+      for (const presetName of autostart) {
+        try {
+          const binary = getLlamaServerPath();
+          if (!binary) {
+            console.warn(`[Main] Cannot auto-start '${presetName}': llama-server binary not found`);
+            continue;
+          }
+          const presetPath = nodePath.join(LLAMA_PRESETS_DIR, `${presetName}.json`);
+          if (!fs.existsSync(presetPath)) {
+            console.warn(`[Main] Cannot auto-start '${presetName}': preset file not found`);
+            continue;
+          }
+          // Re-use the existing start logic via IPC isn't possible here,
+          // so we inline the spawn directly.
+          const preset = JSON.parse(fs.readFileSync(presetPath, "utf-8"));
+          if (getRunningServerForPreset(presetName)) {
+            console.log(`[Main] Preset '${presetName}' already running, skipping autostart`);
+            continue;
+          }
+          const args = [
+            "-m", preset.modelPath,
+            "--port", String(preset.port || 8080),
+            "-c", String(preset.contextSize || 4096),
+            "-t", String(preset.threads || 4),
+            "-b", String(preset.batchSize || 512),
+            "-ub", String(preset.ubatchSize || 512),
+            "--temp", String(preset.temperature ?? 0.8),
+            "--top-p", String(preset.topP ?? 0.9),
+            "--top-k", String(preset.topK ?? 40),
+            "--repeat-penalty", String(preset.repeatPenalty ?? 1.1),
+            "-n", String(preset.maxTokens ?? -1),
+          ];
+          if (preset.gpuLayers) args.push("-ngl", String(preset.gpuLayers));
+          if (preset.chatTemplate) args.push("--chat-template", preset.chatTemplate);
+          if (preset.extraArgs) args.push(...preset.extraArgs.split(/\s+/).filter(Boolean));
+          const proc = spawn(binary, args, { detached: true, stdio: "ignore" });
+          proc.unref();
+          const servers = readServersRegistry();
+          servers.push({
+            pid: proc.pid!,
+            port: preset.port || 8080,
+            preset: presetName,
+            startedAt: new Date().toISOString(),
+          });
+          writeServersRegistry(servers);
+          console.log(`[Main] Auto-started '${presetName}' on port ${preset.port || 8080} (PID ${proc.pid})`);
+        } catch (err) {
+          console.error(`[Main] Failed to auto-start preset '${presetName}':`, err);
+        }
+      }
+    }
+  } catch (err) {
+    console.error("[Main] Llama.cpp autostart failed:", err);
+  }
+
   // Register global shortcuts for layout slots
   try {
     const slots = layoutManager.listSlots();
@@ -693,7 +754,7 @@ import { spawn, exec } from "node:child_process";
 
 const REPROMPTY_CONFIG_DIR = nodePath.join(os.homedir(), ".config", "reprompty");
 const LLAMA_PRESETS_DIR = nodePath.join(REPROMPTY_CONFIG_DIR, "llama-cpp-presets");
-const LLAMA_PID_FILE = nodePath.join(REPROMPTY_CONFIG_DIR, "llama-server.pid");
+const LLAMA_SERVERS_FILE = nodePath.join(REPROMPTY_CONFIG_DIR, "llama-servers.json");
 const LLAMA_CONFIG_FILE = nodePath.join(REPROMPTY_CONFIG_DIR, "llama-config.json");
 const GRAPHITI_COMPOSE_DIR = nodePath.join(os.homedir(), "Projects", "OS-Toolkit", "graphiti-mcp");
 
@@ -704,6 +765,85 @@ function ensureConfigDir() {
   if (!fs.existsSync(LLAMA_PRESETS_DIR)) {
     fs.mkdirSync(LLAMA_PRESETS_DIR, { recursive: true });
   }
+}
+
+// ============================================================================
+// Multi-server registry helpers
+// ============================================================================
+
+interface ServerEntry {
+  pid: number;
+  port: number;
+  preset: string;
+  startedAt: string;
+}
+
+function readServersRegistry(): ServerEntry[] {
+  if (!fs.existsSync(LLAMA_SERVERS_FILE)) return [];
+  try {
+    const data = JSON.parse(fs.readFileSync(LLAMA_SERVERS_FILE, "utf-8"));
+    if (Array.isArray(data)) return data;
+    // Legacy single-object format migration
+    if (data && typeof data.pid === "number") return [data as ServerEntry];
+  } catch {
+    // ignore parse errors
+  }
+  return [];
+}
+
+function writeServersRegistry(servers: ServerEntry[]) {
+  fs.writeFileSync(LLAMA_SERVERS_FILE, JSON.stringify(servers, null, 2));
+}
+
+function pruneDeadServers(): ServerEntry[] {
+  const servers = readServersRegistry();
+  const alive = servers.filter((s) => {
+    try {
+      process.kill(s.pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  if (alive.length !== servers.length) {
+    writeServersRegistry(alive);
+  }
+  return alive;
+}
+
+function getRunningServerForPreset(presetName: string): ServerEntry | undefined {
+  return pruneDeadServers().find((s) => s.preset === presetName);
+}
+
+async function stopServerByPreset(presetName: string): Promise<boolean> {
+  const servers = readServersRegistry();
+  const entry = servers.find((s) => s.preset === presetName);
+  if (!entry) return false;
+
+  try {
+    process.kill(entry.pid, "SIGTERM");
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    try {
+      process.kill(entry.pid, 0);
+      process.kill(entry.pid, "SIGKILL");
+    } catch {}
+  } catch {}
+
+  writeServersRegistry(servers.filter((s) => s.preset !== presetName));
+  return true;
+}
+
+function readLlamaConfig(): Record<string, unknown> {
+  if (!fs.existsSync(LLAMA_CONFIG_FILE)) return {};
+  try {
+    return JSON.parse(fs.readFileSync(LLAMA_CONFIG_FILE, "utf-8"));
+  } catch {
+    return {};
+  }
+}
+
+function writeLlamaConfig(config: Record<string, unknown>) {
+  fs.writeFileSync(LLAMA_CONFIG_FILE, JSON.stringify(config, null, 2));
 }
 
 function getLlamaServerPath(): string | null {
@@ -864,17 +1004,10 @@ electron.ipcMain.handle("llama-start", async (_event: any, presetName: string) =
   if (!fs.existsSync(presetPath)) return { success: false, error: `Preset '${presetName}' not found` };
   const preset = JSON.parse(fs.readFileSync(presetPath, "utf-8"));
 
-  if (!fs.existsSync(LLAMA_PID_FILE)) {
-    // no-op
-  } else {
-    const oldPid = parseInt(fs.readFileSync(LLAMA_PID_FILE, "utf-8"), 10);
-    try { process.kill(oldPid, 0); } catch {
-      fs.unlinkSync(LLAMA_PID_FILE);
-    }
-  }
-
-  if (fs.existsSync(LLAMA_PID_FILE)) {
-    return { success: false, error: "llama-server is already running. Stop it first." };
+  // Check if this preset is already running
+  const existing = getRunningServerForPreset(presetName);
+  if (existing) {
+    return { success: false, error: `Preset '${presetName}' is already running on port ${existing.port}. Stop it first.` };
   }
 
   const args = [
@@ -899,33 +1032,59 @@ electron.ipcMain.handle("llama-start", async (_event: any, presetName: string) =
     stdio: "ignore",
   });
   proc.unref();
-  fs.writeFileSync(LLAMA_PID_FILE, JSON.stringify({ pid: proc.pid, port: preset.port || 8080, preset: presetName }));
+
+  const servers = readServersRegistry();
+  servers.push({
+    pid: proc.pid!,
+    port: preset.port || 8080,
+    preset: presetName,
+    startedAt: new Date().toISOString(),
+  });
+  writeServersRegistry(servers);
+
   return { success: true, pid: proc.pid, port: preset.port || 8080 };
 });
 
 electron.ipcMain.handle("llama-stop", async () => {
-  if (!fs.existsSync(LLAMA_PID_FILE)) return { success: true };
-  const info = JSON.parse(fs.readFileSync(LLAMA_PID_FILE, "utf-8"));
-  try {
-    process.kill(info.pid, "SIGTERM");
-    // Wait up to 3s then SIGKILL
-    await new Promise((resolve) => setTimeout(resolve, 3000));
-    try { process.kill(info.pid, 0); process.kill(info.pid, "SIGKILL"); } catch {}
-  } catch {}
-  fs.unlinkSync(LLAMA_PID_FILE);
+  const servers = pruneDeadServers();
+  for (const entry of servers) {
+    try {
+      process.kill(entry.pid, "SIGTERM");
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      try { process.kill(entry.pid, 0); process.kill(entry.pid, "SIGKILL"); } catch {}
+    } catch {}
+  }
+  writeServersRegistry([]);
   return { success: true };
 });
 
+electron.ipcMain.handle("llama-stop-preset", async (_event: any, presetName: string) => {
+  const stopped = await stopServerByPreset(presetName);
+  return { success: stopped };
+});
+
 electron.ipcMain.handle("llama-status", async () => {
-  if (!fs.existsSync(LLAMA_PID_FILE)) return { running: false };
-  const info = JSON.parse(fs.readFileSync(LLAMA_PID_FILE, "utf-8"));
-  try {
-    process.kill(info.pid, 0);
-    return { running: true, pid: info.pid, port: info.port, preset: info.preset };
-  } catch {
-    fs.unlinkSync(LLAMA_PID_FILE);
-    return { running: false };
+  const servers = pruneDeadServers();
+  return servers.map((s) => ({ running: true, pid: s.pid, port: s.port, preset: s.preset }));
+});
+
+electron.ipcMain.handle("llama-get-autostart", async () => {
+  const config = readLlamaConfig();
+  return Array.isArray(config.autostart) ? config.autostart : [];
+});
+
+electron.ipcMain.handle("llama-set-autostart", async (_event: any, presetName: string, enabled: boolean) => {
+  const config = readLlamaConfig();
+  const list = Array.isArray(config.autostart) ? [...(config.autostart as string[])] : [];
+  const idx = list.indexOf(presetName);
+  if (enabled && idx === -1) {
+    list.push(presetName);
+  } else if (!enabled && idx !== -1) {
+    list.splice(idx, 1);
   }
+  config.autostart = list;
+  writeLlamaConfig(config);
+  return list;
 });
 
 electron.ipcMain.handle("llama-get-binary-path", async () => {
