@@ -3,18 +3,20 @@
 VS Code: Secondary Side Bar Toggle
 
 Instantly toggles the secondary/auxiliary side bar via Chrome DevTools Protocol,
-disables/restores the default Ctrl+Alt+B binding, and can listen for the Pause/Break
-key to trigger the toggle.
+disables/restores the default Ctrl+Alt+B binding, and can listen for a user-captured
+key (e.g. Pause/Break) to trigger the toggle.
 
 # reprompty-mcp: {"toolName":"toggle_secondary_sidebar","label":"Toggle Secondary Side Bar","description":"Toggle VS Code: secondary side bar visibility via CDP","args":["toggle"]}
+# reprompty-mcp: {"toolName":"configure_sidebar_key","label":"Configure Sidebar Key","description":"Open UI to capture your special key and start using it","args":["configure"]}
 # reprompty-mcp: {"toolName":"disable_ctrl_alt_b","label":"Disable Ctrl+Alt+B","description":"Unbind Ctrl+Alt+B from toggling the secondary side bar","args":["disable_ctrl_alt_b"]}
 # reprompty-mcp: {"toolName":"enable_ctrl_alt_b","label":"Enable Ctrl+Alt+B","description":"Restore Ctrl+Alt+B for toggling the secondary side bar","args":["enable_ctrl_alt_b"]}
-# reprompty-mcp: {"toolName":"start_pause_break_listener","label":"Start Pause/Break Listener","description":"Start listening for Pause/Break key to toggle the side bar","args":["start"]}
-# reprompty-mcp: {"toolName":"stop_pause_break_listener","label":"Stop Pause/Break Listener","description":"Stop the Pause/Break key listener","args":["stop"]}
-# reprompty-mcp: {"toolName":"pause_break_listener_status","label":"Pause/Break Listener Status","description":"Show whether the Pause/Break listener is running","args":["status"]}
+# reprompty-mcp: {"toolName":"start_sidebar_listener","label":"Start Sidebar Listener","description":"Start listening for the configured key to toggle the side bar","args":["start"]}
+# reprompty-mcp: {"toolName":"stop_sidebar_listener","label":"Stop Sidebar Listener","description":"Stop the configured-key listener","args":["stop"]}
+# reprompty-mcp: {"toolName":"sidebar_listener_status","label":"Sidebar Listener Status","description":"Show whether the key listener is running","args":["status"]}
 
 Usage:
     python3 vscode-toggle-secondary-sidebar.py toggle
+    python3 vscode-toggle-secondary-sidebar.py configure
     python3 vscode-toggle-secondary-sidebar.py disable_ctrl_alt_b
     python3 vscode-toggle-secondary-sidebar.py enable_ctrl_alt_b
     python3 vscode-toggle-secondary-sidebar.py start
@@ -34,10 +36,11 @@ import socket
 import struct
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 # =============================================================================
 # Configuration
@@ -45,9 +48,13 @@ from typing import Optional
 
 DEFAULT_CDP_PORT = 9222
 DEFAULT_KEYBINDINGS_PATH = Path.home() / ".config" / "Code" / "User" / "keybindings.json"
-PID_FILE = Path.home() / ".reprompty" / "vscode-toggle-secondary-sidebar.pid"
+CONFIG_DIR = Path.home() / ".reprompty"
+PID_FILE = CONFIG_DIR / "vscode-toggle-secondary-sidebar.pid"
+KEY_CONFIG_FILE = CONFIG_DIR / "vscode-sidebar-key.json"
 COMMAND_NAME = "View: Toggle Secondary Side Bar Visibility"
 COMMAND_ID = "workbench.action.toggleAuxiliaryBar"
+DEFAULT_KEY_NAME = "KEY_PAUSE"
+DEFAULT_KEY_CODE = 119
 
 # =============================================================================
 # Minimal stdlib WebSocket client for CDP
@@ -250,9 +257,7 @@ def toggle_secondary_side_bar(cdp_port: int = DEFAULT_CDP_PORT) -> bool:
     ws = MinimalWebSocket(ws_url, timeout=10.0)
 
     try:
-        # Enable Runtime so the page is ready
         ws.send_text(json.dumps({"id": 1, "method": "Runtime.enable"}))
-        # Drain the executionContextCreated event
         ws.recv_text(timeout=2.0)
 
         msg_id = 2
@@ -273,13 +278,11 @@ def toggle_secondary_side_bar(cdp_port: int = DEFAULT_CDP_PORT) -> bool:
 
         time.sleep(0.25)
 
-        # Type the command name via insertText
         ws.send_text(json.dumps({"id": msg_id, "method": "Input.insertText", "params": {"text": COMMAND_NAME}}))
         msg_id += 1
 
         time.sleep(0.2)
 
-        # Press Enter
         send_key_event(ws, msg_id, "rawKeyDown", "Enter", "Enter", 13, 13, 0)
         msg_id += 1
         send_key_event(ws, msg_id, "keyUp", "Enter", "Enter", 13, 13, 0)
@@ -328,6 +331,7 @@ def disable_ctrl_alt_b(path: Optional[Path] = None):
     })
     save_keybindings(target, bindings)
     print(f"Disabled Ctrl+Alt+B for secondary side bar in {target}")
+    print("VS Code: should reload keybindings automatically. If not, reload the window (Ctrl+Shift+P → 'Developer: Reload Window').")
 
 
 def enable_ctrl_alt_b(path: Optional[Path] = None):
@@ -345,10 +349,31 @@ def enable_ctrl_alt_b(path: Optional[Path] = None):
 
     save_keybindings(target, new_bindings)
     print(f"Restored Ctrl+Alt+B for secondary side bar in {target}")
+    print("VS Code: should reload keybindings automatically. If not, reload the window (Ctrl+Shift+P → 'Developer: Reload Window').")
 
 
 # =============================================================================
-# Pause/Break listener
+# Config helpers
+# =============================================================================
+
+
+def load_key_config() -> Tuple[str, int]:
+    if KEY_CONFIG_FILE.exists():
+        try:
+            data = json.loads(KEY_CONFIG_FILE.read_text())
+            return data.get("key_name", DEFAULT_KEY_NAME), int(data.get("key_code", DEFAULT_KEY_CODE))
+        except Exception:
+            pass
+    return DEFAULT_KEY_NAME, DEFAULT_KEY_CODE
+
+
+def save_key_config(key_name: str, key_code: int):
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    KEY_CONFIG_FILE.write_text(json.dumps({"key_name": key_name, "key_code": key_code}, indent=2))
+
+
+# =============================================================================
+# Listener daemon
 # =============================================================================
 
 
@@ -373,7 +398,7 @@ def read_pid() -> Optional[int]:
 
 
 def write_pid(pid: int):
-    PID_FILE.parent.mkdir(parents=True, exist_ok=True)
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     PID_FILE.write_text(str(pid))
 
 
@@ -395,19 +420,20 @@ def is_process_running(pid: int) -> bool:
 def listener_status():
     pid = read_pid()
     if pid is None:
-        print("Pause/Break listener is not running")
+        print("Sidebar key listener is not running")
         return
     if is_process_running(pid):
-        print(f"Pause/Break listener is running (PID {pid})")
+        key_name, key_code = load_key_config()
+        print(f"Sidebar key listener is running (PID {pid}), listening for {key_name} (code {key_code})")
     else:
-        print(f"Pause/Break listener PID {pid} is stale")
+        print(f"Sidebar key listener PID {pid} is stale")
         clear_pid()
 
 
 def stop_listener():
     pid = read_pid()
     if pid is None:
-        print("Pause/Break listener is not running")
+        print("Sidebar key listener is not running")
         return
     if is_process_running(pid):
         try:
@@ -418,22 +444,21 @@ def stop_listener():
                 time.sleep(0.1)
         except ProcessLookupError:
             pass
-        print(f"Stopped Pause/Break listener (PID {pid})")
+        print(f"Stopped sidebar key listener (PID {pid})")
     else:
-        print(f"Pause/Break listener PID {pid} was already dead")
+        print(f"Sidebar key listener PID {pid} was already dead")
     clear_pid()
 
 
-def find_keyboard_devices():
-    """Return a list of keyboard evdev devices."""
+def find_keyboards_with_key(key_code: int):
+    """Return a list of evdev devices that expose the given key code."""
     try:
         import evdev
     except ImportError:
         raise RuntimeError(
             "evdev is not installed. Run:\n"
             "  python3 -m venv /path/to/venv\n"
-            "  /path/to/venv/bin/pip install evdev\n"
-            "or use your system package manager."
+            "  /path/to/venv/bin/pip install evdev"
         )
 
     keyboards = []
@@ -441,7 +466,7 @@ def find_keyboard_devices():
         try:
             dev = evdev.InputDevice(device_path)
             caps = dev.capabilities().get(evdev.ecodes.EV_KEY, [])
-            if evdev.ecodes.KEY_PAUSE in caps:
+            if key_code in caps:
                 keyboards.append(dev)
         except Exception:
             continue
@@ -456,22 +481,22 @@ def listen_loop():
         print("evdev is not installed; cannot start listener", file=sys.stderr)
         sys.exit(1)
 
-    keyboards = find_keyboard_devices()
+    key_name, key_code = load_key_config()
+    keyboards = find_keyboards_with_key(key_code)
     if not keyboards:
-        print("No keyboard with Pause/Break key found", file=sys.stderr)
+        print(f"No keyboard with {key_name} (code {key_code}) found", file=sys.stderr)
         sys.exit(1)
 
-    # Grab all candidate keyboards so Pause/Break does not reach other apps
     for dev in keyboards:
         try:
             dev.grab()
         except Exception as e:
             print(f"Could not grab {dev.path}: {e}", file=sys.stderr)
 
-    script = get_script_path()
     python = sys.executable
+    script = get_script_path()
 
-    print(f"Listening for Pause/Break on {len(keyboards)} keyboard(s)...")
+    print(f"Listening for {key_name} (code {key_code}) on {len(keyboards)} keyboard(s)...")
     sys.stdout.flush()
 
     fds = {dev.fd: dev for dev in keyboards}
@@ -484,7 +509,7 @@ def listen_loop():
                     for event in dev.read():
                         if (
                             event.type == evdev.ecodes.EV_KEY
-                            and event.code == evdev.ecodes.KEY_PAUSE
+                            and event.code == key_code
                             and event.value == 1
                         ):
                             try:
@@ -506,10 +531,10 @@ def listen_loop():
 def start_listener():
     pid = read_pid()
     if pid is not None and is_process_running(pid):
-        print(f"Pause/Break listener already running (PID {pid})")
+        key_name, _ = load_key_config()
+        print(f"Sidebar key listener already running (PID {pid}), listening for {key_name}")
         return
 
-    # Ensure evdev is available
     try:
         import evdev  # noqa: F401
     except ImportError:
@@ -523,15 +548,169 @@ def start_listener():
     pid = os.fork()
     if pid > 0:
         write_pid(pid)
-        print(f"Started Pause/Break listener (PID {pid})")
+        key_name, _ = load_key_config()
+        print(f"Started sidebar key listener (PID {pid}), listening for {key_name}")
         return
 
-    # Child process
     os.setsid()
-    sys.stdin.close()
+    try:
+        sys.stdin.close()
+    except Exception:
+        pass
     sys.stdout.flush()
     sys.stderr.flush()
     listen_loop()
+
+
+# =============================================================================
+# Key-capture GUI
+# =============================================================================
+
+
+def ensure_venv():
+    """Re-exec with venv python if evdev is missing."""
+    try:
+        import evdev  # noqa: F401
+        return
+    except ImportError:
+        venv_python = get_venv_python()
+        if venv_python:
+            os.execv(venv_python, [venv_python, str(get_script_path()), "configure"])
+        print("evdev is not installed. Cannot open key capture UI.", file=sys.stderr)
+        sys.exit(1)
+
+
+def run_key_capture_gui():
+    """Open a PyQt6 window that captures the next key press via evdev."""
+    ensure_venv()
+
+    try:
+        from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QLabel, QPushButton, QHBoxLayout
+        from PyQt6.QtCore import QTimer, Qt
+    except ImportError as e:
+        print(f"PyQt6 is not available: {e}. Cannot open key capture UI.", file=sys.stderr)
+        sys.exit(1)
+
+    import evdev
+
+    app = QApplication(sys.argv)
+    window = QWidget()
+    window.setWindowTitle("Configure Sidebar Toggle Key")
+    window.setMinimumSize(500, 220)
+
+    current_key_name, current_key_code = load_key_config()
+
+    layout = QVBoxLayout()
+
+    status_label = QLabel(f"Current key: {current_key_name} (code {current_key_code})")
+    status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    layout.addWidget(status_label)
+
+    instruction_label = QLabel("Click 'Capture Key', then press the key you want to use.")
+    instruction_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    instruction_label.setWordWrap(True)
+    layout.addWidget(instruction_label)
+
+    btn_layout = QHBoxLayout()
+    capture_btn = QPushButton("Capture Key")
+    apply_btn = QPushButton("Apply")
+    close_btn = QPushButton("Close")
+    btn_layout.addWidget(capture_btn)
+    btn_layout.addWidget(apply_btn)
+    btn_layout.addWidget(close_btn)
+    layout.addLayout(btn_layout)
+
+    window.setLayout(layout)
+
+    devices = []
+    capturing = {"active": False}
+    captured = {"name": None, "code": None}
+    timer = QTimer()
+
+    def refresh_devices():
+        for dev in devices:
+            try:
+                dev.ungrab()
+            except Exception:
+                pass
+        devices.clear()
+        for path in evdev.list_devices():
+            try:
+                devices.append(evdev.InputDevice(path))
+            except Exception:
+                pass
+
+    def stop_capture():
+        capturing["active"] = False
+        timer.stop()
+        for dev in devices:
+            try:
+                dev.ungrab()
+            except Exception:
+                pass
+
+    def poll_for_key():
+        if not capturing["active"]:
+            return
+        fds = {dev.fd: dev for dev in devices}
+        if not fds:
+            instruction_label.setText("No input devices found.")
+            stop_capture()
+            return
+        readable, _, _ = select.select(list(fds.keys()), [], [], 0.05)
+        for fd in readable:
+            dev = fds[fd]
+            try:
+                for event in dev.read():
+                    if event.type == evdev.ecodes.EV_KEY and event.value == 1:
+                        key_name = evdev.ecodes.KEY.get(event.code, f"KEY_{event.code}")
+                        captured["name"] = key_name
+                        captured["code"] = event.code
+                        status_label.setText(f"Captured: {key_name} (code {event.code})")
+                        instruction_label.setText("Key captured. Click Apply to use it.")
+                        stop_capture()
+                        return
+            except Exception:
+                pass
+
+    def on_capture():
+        refresh_devices()
+        for dev in devices:
+            try:
+                dev.grab()
+            except Exception:
+                pass
+        capturing["active"] = True
+        instruction_label.setText("Listening... press your key now.")
+        status_label.setText("Waiting for key press...")
+        timer.timeout.connect(poll_for_key)
+        timer.start(50)
+
+    def on_apply():
+        if captured["name"] is None:
+            instruction_label.setText("No key captured yet. Click Capture Key first.")
+            return
+        save_key_config(captured["name"], captured["code"])
+        instruction_label.setText(f"Saved {captured['name']}. Disabling Ctrl+Alt+B and starting listener...")
+        app.processEvents()
+        try:
+            disable_ctrl_alt_b()
+            stop_listener()
+            start_listener()
+            instruction_label.setText(f"Done. {captured['name']} now toggles the side bar.")
+        except Exception as e:
+            instruction_label.setText(f"Error: {e}")
+
+    def on_close():
+        stop_capture()
+        window.close()
+
+    capture_btn.clicked.connect(on_capture)
+    apply_btn.clicked.connect(on_apply)
+    close_btn.clicked.connect(on_close)
+
+    window.show()
+    app.exec()
 
 
 # =============================================================================
@@ -541,12 +720,12 @@ def start_listener():
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Toggle VS Code: secondary side bar via CDP and bind Pause/Break."
+        description="Toggle VS Code: secondary side bar via CDP and bind a custom key."
     )
     parser.add_argument(
         "action",
         nargs="?",
-        choices=["toggle", "disable_ctrl_alt_b", "enable_ctrl_alt_b", "start", "stop", "status"],
+        choices=["toggle", "configure", "disable_ctrl_alt_b", "enable_ctrl_alt_b", "start", "stop", "status"],
         default="toggle",
         help="Action to perform (default: toggle)",
     )
@@ -558,6 +737,8 @@ def main():
     if args.action == "toggle":
         if toggle_secondary_side_bar(args.cdp_port):
             print("Toggled secondary side bar")
+    elif args.action == "configure":
+        run_key_capture_gui()
     elif args.action == "disable_ctrl_alt_b":
         disable_ctrl_alt_b(args.keybindings)
     elif args.action == "enable_ctrl_alt_b":
