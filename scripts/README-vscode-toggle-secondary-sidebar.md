@@ -1,30 +1,39 @@
 # VS Code: Secondary Side Bar Toggle
 
-A Reprompty-registered Python script that toggles VS Code:'s secondary/auxiliary side bar via Chrome DevTools Protocol, optionally disables the default `Ctrl+Alt+B` keybinding, and can listen for the **Pause/Break** key to trigger the toggle.
+A Reprompty-registered Python script that toggles VS Code:'s secondary/auxiliary side bar via Chrome DevTools Protocol, disables the default `Ctrl+Alt+B` keybinding, and lets you bind any key (e.g. Pause/Break) to trigger the toggle.
 
 ## Files
 
 - `vscode-toggle-secondary-sidebar.py` — main script
-- `.venv/` — local Python virtual environment with `evdev` (created automatically on first `start`)
+- `.venv/` — local Python virtual environment with `evdev` (created automatically)
 
 ## MCP actions (Reprompty Scripts tab)
-
-The script exposes these actions automatically through `# reprompty-mcp:` header comments:
 
 | Action | Purpose |
 |--------|---------|
 | `toggle_secondary_sidebar` | Toggle the secondary side bar |
+| `configure_sidebar_key` | Open the key-capture GUI |
 | `disable_ctrl_alt_b` | Remove the default `Ctrl+Alt+B` binding |
 | `enable_ctrl_alt_b` | Restore the default `Ctrl+Alt+B` binding |
-| `start_pause_break_listener` | Start listening for Pause/Break |
-| `stop_pause_break_listener` | Stop the listener |
-| `pause_break_listener_status` | Show listener state |
+| `start_sidebar_listener` | Start listening for your configured key |
+| `stop_sidebar_listener` | Stop the listener |
+| `sidebar_listener_status` | Show listener state |
 
 ## Requirements
 
 - VS Code: running with CDP enabled on `localhost:9222` (Reprompty/Kilo Code: usually enables this)
 - Python 3.10+
-- `evdev` is only needed for the Pause/Break listener; the script installs it into a local `.venv`
+- `evdev` is only needed for the key listener; the script installs it into a local `.venv`
+
+## Quick start
+
+1. In Reprompty, click **Configure Sidebar Key**.
+2. In the window that opens, click **Capture Key**, then press your special key (e.g. Pause/Break).
+3. Click **Apply**. This will:
+   - save the key,
+   - disable `Ctrl+Alt+B` in VS Code:,
+   - start the listener.
+4. Press your key — the side bar toggles.
 
 ## Manual usage
 
@@ -34,37 +43,36 @@ cd /home/tope/Projects/OS-Toolkit/Reprompty/scripts
 # Toggle the side bar
 python3 vscode-toggle-secondary-sidebar.py toggle
 
+# Open the key-capture GUI
+python3 vscode-toggle-secondary-sidebar.py configure
+
 # Disable/restore Ctrl+Alt+B
 python3 vscode-toggle-secondary-sidebar.py disable_ctrl_alt_b
 python3 vscode-toggle-secondary-sidebar.py enable_ctrl_alt_b
 
-# Pause/Break listener
+# Listener control
 python3 vscode-toggle-secondary-sidebar.py start
 python3 vscode-toggle-secondary-sidebar.py stop
 python3 vscode-toggle-secondary-sidebar.py status
 ```
 
-## Pause/Break listener notes
+## How the key binding works
 
-- The listener grabs all keyboards that expose `KEY_PAUSE`, so the key does not reach other applications.
-- You must be in the `input` group (check with `id`) or run the script with root privileges.
-- If `evdev` is missing, the script will create/use `.venv` and install it automatically.
+- The captured key is stored in `~/.reprompty/vscode-sidebar-key.json`.
+- The listener grabs all keyboards that expose that key, so the key does not reach other applications.
+- You must be in the `input` group (check with `id`) or run with root privileges for the grab to work.
 
-## Alternative: KDE global shortcut
+## How Ctrl+Alt+B is disabled
 
-If you prefer not to use the evdev listener, bind the `toggle_secondary_sidebar` MCP action (or the raw script) to a KDE global shortcut:
-
-1. Open **System Settings → Shortcuts → Custom Shortcuts**.
-2. Add a new global shortcut → command/URL.
-3. Set the trigger to Pause/Break.
-4. Set the command to:
-   ```bash
-   python3 /home/tope/Projects/OS-Toolkit/Reprompty/scripts/vscode-toggle-secondary-sidebar.py toggle
-   ```
-5. Run `disable_ctrl_alt_b` once so only your shortcut toggles the side bar.
+The script edits `~/.config/Code:/User/keybindings.json` and adds a rule that unbinds `Ctrl+Alt+B` from `workbench.action.toggleAuxiliaryBar`. VS Code: usually reloads this file automatically; if not, run **Developer: Reload Window** from the command palette.
 
 ## Troubleshooting
 
-- **"No VS Code: page found on CDP"**: Make sure VS Code: is running and CDP is enabled on port 9222.
-- **Toggle does nothing**: Ensure the VS Code: window is not showing a modal or notification that would steal input.
-- **Listener fails with permission error**: Add your user to the `input` group and re-login, or run with `sudo`.
+- **"No keyboard with KEY_PAUSE found"**: Run `configure` and capture your exact key.
+- **"evdev is not installed"**: The script will use `.venv` automatically; if `.venv` is missing, run:
+  ```bash
+  python3 -m venv .venv
+  .venv/bin/pip install evdev
+  ```
+- **Toggle does nothing**: Make sure VS Code: is focused and no modal/notification is blocking input.
+- **Listener permission error**: Add your user to the `input` group and re-login, or run with `sudo`.
