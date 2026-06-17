@@ -365,15 +365,18 @@ electron.app.whenReady().then(() => {
     console.error("[GlobalShortcut] Registration failed:", err);
   }
 
-  // Start window auto-detection polling (every 5 seconds)
-  setInterval(async () => {
-    try {
-      const windows = await platform.detectWindows();
-      mainWindow?.webContents?.send("windows-detected", windows);
-    } catch {
-      // Ignore detection errors during polling
-    }
-  }, 5000);
+  // Start window auto-detection polling (every 10 seconds, or disabled via env)
+  const pollingDisabled = process.env.REPROMPTY_DISABLE_WINDOW_POLL === "1";
+  if (!pollingDisabled) {
+    setInterval(async () => {
+      try {
+        const windows = await platform.detectWindows();
+        mainWindow?.webContents?.send("windows-detected", windows);
+      } catch {
+        // Ignore detection errors during polling
+      }
+    }, 10000);
+  }
 });
 
 electron.app.on("window-all-closed", () => {

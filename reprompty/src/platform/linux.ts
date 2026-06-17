@@ -131,31 +131,37 @@ function listWindowsKdotool(): Array<{ pid: number; title: string; processName: 
 }
 
 function findKdotoolHandleByPid(pid: number): string | null {
-  if (!hasKdotool()) return null;
+  if (!hasKdotool() || !Number.isFinite(pid) || pid <= 0) return null;
   const kdotoolPath = getKdotoolPath();
   try {
     const output = execSync(
-      `"${kdotoolPath}" search ".*"`,
+      `"${kdotoolPath}" search --pid ${pid}`,
       { encoding: "utf-8", timeout: 5000 }
     ).trim();
-    const lines = output.split("\n").map((l) => l.trim()).filter((l) => l.startsWith("{"));
-    for (const handle of lines) {
+    const handles = output
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l.startsWith("{"));
+
+    // Prefer a handle whose title looks like an editor window.
+    for (const handle of handles) {
       try {
-        const pidStr = execSync(
-          `"${kdotoolPath}" getwindowpid ${handle}`,
+        const title = execSync(
+          `"${kdotoolPath}" getwindowname ${handle}`,
           { encoding: "utf-8", timeout: 2000 }
         ).trim();
-        if (parseInt(pidStr, 10) === pid) {
+        if (isEditorWindowTitle(title)) {
           return handle;
         }
       } catch {
         // continue
       }
     }
+
+    return handles[0] ?? null;
   } catch {
-    // ignore
+    return null;
   }
-  return null;
 }
 
 function getWritableTempDir(): string {
@@ -873,12 +879,17 @@ export async function detectWindows(): Promise<DetectedWindow[]> {
   let lines: string[] = [];
   let useWaylandFallback = false;
 
-  try {
-    const raw = execSync("wmctrl -l -p", { encoding: "utf-8", timeout: 10000 }).trim();
-    lines = raw.split("\n").map((l) => l.trim()).filter((l) => l);
-  } catch {
-    // wmctrl not available or no windows — fall back on Wayland
-    useWaylandFallback = isWaylandSession();
+  // On native Wayland sessions, skip wmctrl entirely. It only sees XWayland
+  // windows and can destabilize Plasma/KWin when mixed with kdotool calls.
+  if (!isWaylandSession()) {
+    try {
+      const raw = execSync("wmctrl -l -p", { encoding: "utf-8", timeout: 10000 }).trim();
+      lines = raw.split("\n").map((l) => l.trim()).filter((l) => l);
+    } catch {
+      // wmctrl not available or no windows
+    }
+  } else {
+    useWaylandFallback = true;
   }
 
   const seen = new Set<number>();
