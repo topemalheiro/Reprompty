@@ -372,9 +372,20 @@ electron.app.whenReady().then(() => {
     console.log("[GlobalShortcut] Skipping registration on Wayland session");
   }
 
-  // Start window auto-detection polling (every 10 seconds, or disabled via env)
+  // Start window auto-detection polling (every 10 seconds, or disabled via env).
+  // Defer the first detection by 3s so Plasma/KWin isn't hit with D-Bus traffic
+  // while the app is still opening.
   const pollingDisabled = process.env.REPROMPTY_DISABLE_WINDOW_POLL === "1";
   if (!pollingDisabled) {
+    setTimeout(async () => {
+      try {
+        const windows = await platform.detectWindows();
+        mainWindow?.webContents?.send("windows-detected", windows);
+      } catch {
+        // Ignore detection errors during initial detection
+      }
+    }, 3000);
+
     setInterval(async () => {
       try {
         const windows = await platform.detectWindows();
