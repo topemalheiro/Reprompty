@@ -411,7 +411,7 @@ export async function getWindowAgentStates(port: number): Promise<WindowAgentSta
       );
       states.push({
         pageTitle: group.page.title,
-        activeAgent: availableAgents.length === 1 ? availableAgents[0] : "unknown",
+        activeAgent: availableAgents.length > 0 ? availableAgents[0] : "unknown",
         availableAgents,
       });
     }
