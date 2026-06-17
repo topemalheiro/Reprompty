@@ -345,24 +345,31 @@ electron.app.whenReady().then(() => {
     console.error("[Main] Llama.cpp autostart failed:", err);
   }
 
-  // Register global shortcuts for layout slots
-  try {
-    const slots = layoutManager.listSlots();
-    for (const slot of slots) {
-      if (slot.hotkey) {
-        const registered = electron.globalShortcut.register(slot.hotkey, () => {
-          console.log(`[GlobalShortcut] Triggered slot ${slot.letter}: ${slot.name}`);
-          layoutManager.applySlotByLetter(slot.letter);
-        });
-        if (registered) {
-          console.log(`[GlobalShortcut] Registered ${slot.hotkey} for slot ${slot.letter}`);
-        } else {
-          console.warn(`[GlobalShortcut] Failed to register ${slot.hotkey} for slot ${slot.letter}`);
+  // Register global shortcuts for layout slots (skip on Wayland — Electron's
+  // globalShortcut is X11-based and can destabilize Plasma/KWin)
+  const isWaylandSession =
+    process.env.XDG_SESSION_TYPE === "wayland" || !!process.env.WAYLAND_DISPLAY;
+  if (!isWaylandSession) {
+    try {
+      const slots = layoutManager.listSlots();
+      for (const slot of slots) {
+        if (slot.hotkey) {
+          const registered = electron.globalShortcut.register(slot.hotkey, () => {
+            console.log(`[GlobalShortcut] Triggered slot ${slot.letter}: ${slot.name}`);
+            layoutManager.applySlotByLetter(slot.letter);
+          });
+          if (registered) {
+            console.log(`[GlobalShortcut] Registered ${slot.hotkey} for slot ${slot.letter}`);
+          } else {
+            console.warn(`[GlobalShortcut] Failed to register ${slot.hotkey} for slot ${slot.letter}`);
+          }
         }
       }
+    } catch (err) {
+      console.error("[GlobalShortcut] Registration failed:", err);
     }
-  } catch (err) {
-    console.error("[GlobalShortcut] Registration failed:", err);
+  } else {
+    console.log("[GlobalShortcut] Skipping registration on Wayland session");
   }
 
   // Start window auto-detection polling (every 10 seconds, or disabled via env)
