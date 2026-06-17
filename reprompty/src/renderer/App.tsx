@@ -209,14 +209,18 @@ function App() {
 
   useEffect(() => {
     void loadSpawnTargets();
-    void loadVirtualDesktops();
     void loadTaskPresets();
-    window.electronAPI.detectWindows().then(setDetectedWindows).catch(() => undefined);
+    // Defer virtual-desktop loading so it doesn't race with window detection
+    // against KWin / Plasma at startup.
+    const vdTimeout = setTimeout(() => {
+      void loadVirtualDesktops();
+    }, 2500);
     window.electronAPI.onWindowsDetected((windows) => {
       setDetectedWindows(windows);
       void loadVirtualDesktops(true);
     });
     return () => {
+      clearTimeout(vdTimeout);
       window.electronAPI.removeWindowListeners();
     };
   }, []);

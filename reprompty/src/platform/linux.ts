@@ -57,6 +57,29 @@ function hasKdotool(): boolean {
   }
 }
 
+// Per-PID kdotool handle cache to avoid repeatedly querying KWin for the
+// same windows during detection loops.
+const kdotoolHandleCache = new Map<number, { handle: string | null; at: number }>();
+const KDOTOOL_HANDLE_CACHE_TTL_MS = 5000;
+
+function getCachedKdotoolHandleByPid(pid: number): string | null | undefined {
+  const entry = kdotoolHandleCache.get(pid);
+  if (entry && Date.now() - entry.at < KDOTOOL_HANDLE_CACHE_TTL_MS) {
+    return entry.handle;
+  }
+  return undefined;
+}
+
+function setCachedKdotoolHandleByPid(pid: number, handle: string | null): void {
+  kdotoolHandleCache.set(pid, { handle, at: Date.now() });
+}
+
+// Global throttle for detectWindows() so the renderer, polling, and MCP calls
+// cannot stack overlapping KWin queries.
+let lastDetectWindowsResult: DetectedWindow[] | null = null;
+let lastDetectWindowsAt = 0;
+const DETECT_WINDOWS_THROTTLE_MS = 5000;
+
 function listWindowsKdotool(): Array<{ pid: number; title: string; processName: string; handle: string }> {
   const kdotoolPath = getKdotoolPath();
   const results: Array<{ pid: number; title: string; processName: string; handle: string }> = [];
@@ -132,6 +155,12 @@ function listWindowsKdotool(): Array<{ pid: number; title: string; processName: 
 
 function findKdotoolHandleByPid(pid: number): string | null {
   if (!hasKdotool() || !Number.isFinite(pid) || pid <= 0) return null;
+
+  const cached = getCachedKdotoolHandleByPid(pid);
+  if (cached !== undefined) {
+    return cached;
+  }
+
   const kdotoolPath = getKdotoolPath();
   try {
     const output = execSync(
@@ -151,6 +180,7 @@ function findKdotoolHandleByPid(pid: number): string | null {
           { encoding: "utf-8", timeout: 2000 }
         ).trim();
         if (isEditorWindowTitle(title)) {
+          setCachedKdotoolHandleByPid(pid, handle);
           return handle;
         }
       } catch {
@@ -158,8 +188,11 @@ function findKdotoolHandleByPid(pid: number): string | null {
       }
     }
 
-    return handles[0] ?? null;
+    const result = handles[0] ?? null;
+    setCachedKdotoolHandleByPid(pid, result);
+    return result;
   } catch {
+    setCachedKdotoolHandleByPid(pid, null);
     return null;
   }
 }
@@ -880,6 +913,14 @@ export async function detectWindows(): Promise<DetectedWindow[]> {
     return [];
   }
 
+  const now = Date.now();
+  if (
+    lastDetectWindowsResult &&
+    now - lastDetectWindowsAt < DETECT_WINDOWS_THROTTLE_MS
+  ) {
+    return lastDetectWindowsResult;
+  }
+
   let lines: string[] = [];
   let useWaylandFallback = false;
 
@@ -1073,6 +1114,8 @@ export async function detectWindows(): Promise<DetectedWindow[]> {
     }
   }
 
+  lastDetectWindowsResult = results;
+  lastDetectWindowsAt = Date.now();
   return results;
 }
 
