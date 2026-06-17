@@ -876,6 +876,10 @@ export function resolveBackgroundRoute(
  * do not work for native Wayland windows.
  */
 export async function detectWindows(): Promise<DetectedWindow[]> {
+  if (process.env.REPROMPTY_SAFE_MODE === "1") {
+    return [];
+  }
+
   let lines: string[] = [];
   let useWaylandFallback = false;
 
@@ -982,20 +986,40 @@ export async function detectWindows(): Promise<DetectedWindow[]> {
     });
   }
 
-  // KDE Wayland kdotool path: when wmctrl found no editor windows, try kdotool
-  if (results.length === 0 && hasKdotool()) {
-    const kdotoolWindows = listWindowsKdotool();
-    const seenKdotoolHandles = new Set<string>();
-    for (const win of kdotoolWindows) {
-      if (seenKdotoolHandles.has(win.handle)) continue;
-      seenKdotoolHandles.add(win.handle);
+  // On Wayland, build the window list from editor processes and resolve each
+  // window's kdotool handle/title by PID. This avoids broad kdotool title
+  // searches that can destabilize Plasma/KWin on some setups.
+  if (useWaylandFallback || isWaylandSession()) {
+    for (const proc of listEditorProcesses()) {
+      if (seen.has(proc.pid)) continue;
+      seen.add(proc.pid);
 
-      const titleMatch = win.title.match(/^(.+?)\s+-\s+(Visual Studio Code|Kilo Code|Kimi Code|VSCodium|Code: - OSS)/);
+      let title = proc.title;
+      let kdotoolHandle: string | undefined;
+      if (hasKdotool()) {
+        try {
+          const handle = findKdotoolHandleByPid(proc.pid);
+          if (handle) {
+            const realTitle = execSync(
+              `"${getKdotoolPath()}" getwindowname ${handle}`,
+              { encoding: "utf-8", timeout: 2000 }
+            ).trim();
+            if (realTitle) {
+              title = realTitle;
+              kdotoolHandle = handle;
+            }
+          }
+        } catch {
+          // keep process-derived title
+        }
+      }
+
+      const titleMatch = title.match(/^(.+?)\s+-\s+(Visual Studio Code|Kilo Code|Kimi Code|VSCodium|Code: - OSS)/);
       const folderPath = titleMatch ? titleMatch[1].trim() : "";
-      const isKilo = win.processName === "kilocode" || win.title.includes("Kilo Code") || win.title.includes("Kimi Code");
-      const pipePath = resolveKiloPipePath(win.pid);
+      const isKilo = proc.processName === "kilocode" || title.includes("Kilo Code") || title.includes("Kimi Code");
+      const pipePath = resolveKiloPipePath(proc.pid);
       const pipeExists = Boolean(pipePath);
-      const agentState = findWindowAgentState(agentStates, win.title);
+      const agentState = findWindowAgentState(agentStates, title);
       const activeAgent = agentState?.activeAgent ?? "unknown";
       const availableAgents = agentState?.availableAgents ?? [];
       const legacyExtension: DetectedWindow["extension"] = pipeExists
@@ -1012,10 +1036,10 @@ export async function detectWindows(): Promise<DetectedWindow[]> {
       // Query desktop assignment via kdotool
       let desktop: string | undefined;
       let isCurrentDesktop: boolean | undefined;
-      if (win.handle) {
+      if (kdotoolHandle) {
         try {
           const desktopIndexStr = execSync(
-            `"${getKdotoolPath()}" get_desktop_for_window ${win.handle}`,
+            `"${getKdotoolPath()}" get_desktop_for_window ${kdotoolHandle}`,
             { encoding: "utf-8", timeout: 2000 }
           ).trim();
           // kdotool returns 1-based desktop numbers; our indices are 0-based
@@ -1031,11 +1055,11 @@ export async function detectWindows(): Promise<DetectedWindow[]> {
       }
 
       results.push({
-        pid: win.pid,
-        handle: win.pid, // On Wayland there is no X11 handle; use PID as surrogate
-        title: win.title,
+        pid: proc.pid,
+        handle: proc.pid, // On Wayland there is no X11 handle; use PID as surrogate
+        title,
         folderPath,
-        processName: win.processName,
+        processName: proc.processName,
         desktop,
         isCurrentDesktop,
         extension,
@@ -1044,50 +1068,7 @@ export async function detectWindows(): Promise<DetectedWindow[]> {
         backgroundRoute,
         pipePath: pipeExists ? pipePath : null,
         sendMethod,
-        kdotoolHandle: win.handle,
-      });
-    }
-  }
-
-  // Wayland fallback: if no editor windows found, use process listing
-  if (results.length === 0 && (useWaylandFallback || isWaylandSession())) {
-    for (const proc of listEditorProcesses()) {
-      if (seen.has(proc.pid)) continue;
-      seen.add(proc.pid);
-
-      const titleMatch = proc.title.match(/^(.+?)\s+-\s+(Visual Studio Code|Kilo Code|Kimi Code|VSCodium|Code: - OSS)/);
-      const folderPath = titleMatch ? titleMatch[1].trim() : "";
-      const isKilo = proc.processName === "kilocode" || proc.title.includes("Kilo Code") || proc.title.includes("Kimi Code");
-      const pipePath = resolveKiloPipePath(proc.pid);
-      const pipeExists = Boolean(pipePath);
-      const agentState = findWindowAgentState(agentStates, proc.title);
-      const activeAgent = agentState?.activeAgent ?? "unknown";
-      const availableAgents = agentState?.availableAgents ?? [];
-      const legacyExtension: DetectedWindow["extension"] = pipeExists
-        ? "kilo-code"
-        : isKilo
-        ? "kilo-code"
-        : "kilo-code";
-      const backgroundRoute = resolveBackgroundRoute(activeAgent, availableAgents, pipeExists);
-      const sendMethod: DetectedWindow["sendMethod"] =
-        backgroundRoute === "foreground" ? "foreground" : "background";
-      const extension: DetectedWindow["extension"] =
-        activeAgent === "unknown" ? legacyExtension : activeAgent;
-
-      results.push({
-        pid: proc.pid,
-        handle: proc.pid, // On Wayland there is no X11 handle; use PID as surrogate
-        title: proc.title,
-        folderPath,
-        processName: proc.processName,
-        desktop: undefined,
-        isCurrentDesktop: undefined,
-        extension,
-        activeAgent,
-        availableAgents,
-        backgroundRoute,
-        pipePath: pipeExists ? pipePath : null,
-        sendMethod,
+        kdotoolHandle,
       });
     }
   }
