@@ -291,20 +291,66 @@ async function probeViewSwitcher(group: CdpWindowTargetGroup): Promise<ViewSwitc
       ws,
       `
       (() => {
-        const container = document.querySelector('ul.actions-container[aria-label="Active View Switcher"]');
+        function findContainer() {
+          const selectors = [
+            'ul.actions-container[aria-label="Active View Switcher"]',
+            '.composite-bar .actions-container',
+            '[aria-label="Active View Switcher"]',
+            '.composite-bar',
+            '.activitybar .actions-container',
+            '.sidebar .composite-bar',
+          ];
+          for (const selector of selectors) {
+            const el = document.querySelector(selector);
+            if (el) return el;
+          }
+          return null;
+        }
+
+        function getLabel(item) {
+          const labelNode = item.querySelector('.action-label');
+          return (
+            labelNode?.getAttribute('aria-label') ||
+            labelNode?.getAttribute('title') ||
+            labelNode?.textContent?.trim() ||
+            item.getAttribute('aria-label') ||
+            item.getAttribute('title') ||
+            item.getAttribute('data-title') ||
+            ''
+          );
+        }
+
+        function isSelected(item) {
+          return (
+            item.classList.contains('checked') ||
+            item.getAttribute('aria-selected') === 'true' ||
+            item.classList.contains('active') ||
+            item.getAttribute('aria-current') === 'true' ||
+            item.querySelector('.active') !== null
+          );
+        }
+
+        const container = findContainer();
         if (!container) {
           return { activeLabel: null, labels: [] };
         }
-        const items = Array.from(container.querySelectorAll('li.action-item'));
+
+        const items = Array.from(container.querySelectorAll('li.action-item, .action-item'));
         const labels = items
           .map((item) => {
-            const labelNode = item.querySelector('.action-label[aria-label]');
-            const label = labelNode?.getAttribute('aria-label') || labelNode?.textContent?.trim() || '';
-            const selected = item.classList.contains('checked') || item.getAttribute('aria-selected') === 'true';
+            const label = getLabel(item);
+            const selected = isSelected(item);
             return label ? { label, selected } : null;
           })
           .filter((item) => Boolean(item));
-        const active = labels.find((item) => item.selected)?.label ?? null;
+
+        // If nothing reported itself selected, treat the first item as active.
+        // VS Code:'s side-panel switcher usually keeps one tab active.
+        let active = labels.find((item) => item.selected)?.label ?? null;
+        if (!active && labels.length > 0) {
+          active = labels[0].label;
+        }
+
         return {
           activeLabel: active,
           labels: labels.map((item) => item.label),
@@ -338,9 +384,9 @@ function buildWindowAgentState(
   const labelAgents = probe.labels.map((label) => mapAgentLabelToKind(label));
   const availableAgents = uniqueAgents([...iframeAgents, ...labelAgents]);
   let activeAgent = mapAgentLabelToKind(probe.activeLabel);
-  // If no explicit active tab is selected but only one agent is loaded,
-  // it's reasonable to assume that agent is active.
-  if (activeAgent === "unknown" && availableAgents.length === 1) {
+  // If no explicit active tab is selected but agents are loaded, fall back
+  // to the first available agent rather than failing to send.
+  if (activeAgent === "unknown" && availableAgents.length > 0) {
     activeAgent = availableAgents[0];
   }
   return {

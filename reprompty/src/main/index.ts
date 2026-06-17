@@ -513,9 +513,9 @@ electron.ipcMain.handle("send-to-detected", async (_event: any, args: { window: 
   return {
     success: false,
     error:
-      win.activeAgent === "unknown"
-        ? "No active side-panel agent could be resolved for this window"
-        : `No background route available for active agent ${win.activeAgent}`,
+      win.backgroundRoute === "foreground"
+        ? "No background route available for this window"
+        : `Failed to send via ${win.backgroundRoute}`,
   };
 });
 
