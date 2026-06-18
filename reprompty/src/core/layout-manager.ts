@@ -44,58 +44,25 @@ function getDefaultScriptPath(): string {
   if (IS_WINDOWS) {
     return "C:\\Users\\topem\\scripts\\VSCodeSidePanelLayout\\VSCodeSidePanelLayout.ps1";
   }
-  // Linux: prefer the Cython-compiled binary if it's newer than the Python script
-  const cythonCandidates = [
-    path.join(__dirname, "..", "..", "VSCodeSidePanelLayout", "reprompty-layout-cython"),
-    path.join(__dirname, "..", "..", "..", "VSCodeSidePanelLayout", "reprompty-layout-cython"),
-    "/home/tope/Projects/OS-Toolkit/Reprompty/VSCodeSidePanelLayout/reprompty-layout-cython",
-  ];
+  // Linux: use the Python script. The Cython binary is hard to rebuild and has
+  // repeatedly become stale, so we now default to the editable Python source.
   const pythonCandidates = [
     path.join(__dirname, "..", "..", "VSCodeSidePanelLayout", "linux_layout.py"),
     path.join(__dirname, "..", "..", "..", "VSCodeSidePanelLayout", "linux_layout.py"),
     "/home/tope/Projects/OS-Toolkit/Reprompty/VSCodeSidePanelLayout/linux_layout.py",
   ];
 
-  let cythonPath: string | null = null;
-  for (const candidate of cythonCandidates) {
-    try {
-      if (fs.existsSync(candidate)) {
-        cythonPath = candidate;
-        break;
-      }
-    } catch {
-      // Continue
-    }
-  }
-
-  let pythonPath: string | null = null;
   for (const candidate of pythonCandidates) {
     try {
       if (fs.existsSync(candidate)) {
-        pythonPath = candidate;
-        break;
+        return candidate;
       }
     } catch {
       // Continue to next candidate
     }
   }
 
-  if (cythonPath && pythonPath) {
-    try {
-      const cythonStat = fs.statSync(cythonPath);
-      const pythonStat = fs.statSync(pythonPath);
-      if (cythonStat.mtime >= pythonStat.mtime) {
-        return cythonPath;
-      }
-    } catch {
-      // fall through
-    }
-  }
-
-  if (cythonPath) return cythonPath;
-  if (pythonPath) return pythonPath;
-
-  return cythonCandidates[0];
+  return pythonCandidates[0];
 }
 
 const LAYOUT_LOG_DIR_NAME = "VSCodeSidePanelLayout";
@@ -193,6 +160,9 @@ export class LayoutManager {
   private configPath: string;
   private configDir: string;
   private config: LayoutsConfig;
+  private layoutInFlight: Promise<LayoutApplyResult> | null = null;
+  private lastLayoutAt = 0;
+  private readonly LAYOUT_COOLDOWN_MS = 500;
 
   constructor() {
     const homeDir = process.env.USERPROFILE || process.env.HOME || ".";
@@ -323,7 +293,7 @@ export class LayoutManager {
     if (!slot) {
       return Promise.resolve({ success: false, error: `Slot not found: ${id}` });
     }
-    return this.runLayoutScript(slot.scriptArgs, target);
+    return this.runLayoutScriptGuarded(slot.scriptArgs, target);
   }
 
   applySlotByLetter(
@@ -337,7 +307,37 @@ export class LayoutManager {
         error: `Slot "${letter}" not found`,
       });
     }
-    return this.runLayoutScript(slot.scriptArgs, target);
+    return this.runLayoutScriptGuarded(slot.scriptArgs, target);
+  }
+
+  private runLayoutScriptGuarded(
+    args: string[],
+    target: LayoutTarget = {}
+  ): Promise<LayoutApplyResult> {
+    // Serialize layout calls so only one KWin interaction happens at a time,
+    // and enforce a cooldown to avoid hammering KWin with rapid requests.
+    const run = async (): Promise<LayoutApplyResult> => {
+      const elapsed = Date.now() - this.lastLayoutAt;
+      if (elapsed < this.LAYOUT_COOLDOWN_MS) {
+        await new Promise((r) => setTimeout(r, this.LAYOUT_COOLDOWN_MS - elapsed));
+      }
+      const result = await this.runLayoutScript(args, target);
+      this.lastLayoutAt = Date.now();
+      return result;
+    };
+
+    if (this.layoutInFlight) {
+      this.layoutInFlight = this.layoutInFlight.then(run);
+    } else {
+      this.layoutInFlight = run();
+    }
+
+    // Clear the in-flight reference once this chain finishes.
+    this.layoutInFlight.then(() => {
+      this.layoutInFlight = null;
+    });
+
+    return this.layoutInFlight;
   }
 
   private runLayoutScript(

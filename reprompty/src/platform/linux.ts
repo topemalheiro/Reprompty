@@ -40,13 +40,77 @@ function isEditorWindowTitle(title: string): boolean {
 }
 const KILO_PIPE_PREFIXES = ["kilo-ipc-", "kilo-code-", "roo-code-"];
 
+/**
+ * Restore session env vars that may have been stripped by .desktop autostart
+ * or MCP client spawns. Critical for kdotool / KWin / D-Bus to work.
+ */
+export function ensureLinuxSessionEnv(): void {
+  const uid = process.getuid?.() ?? 0;
+
+  if (!process.env.XDG_RUNTIME_DIR) {
+    const runtimeDir = `/run/user/${uid}`;
+    if (fs.existsSync(runtimeDir)) {
+      process.env.XDG_RUNTIME_DIR = runtimeDir;
+    }
+  }
+
+  if (!process.env.DBUS_SESSION_BUS_ADDRESS && process.env.XDG_RUNTIME_DIR) {
+    const busPath = nodePath.join(process.env.XDG_RUNTIME_DIR, "bus");
+    if (fs.existsSync(busPath)) {
+      process.env.DBUS_SESSION_BUS_ADDRESS = `unix:path=${busPath}`;
+    }
+  }
+
+  if (!process.env.XDG_SESSION_TYPE) {
+    const waylandSocket = process.env.XDG_RUNTIME_DIR
+      ? nodePath.join(process.env.XDG_RUNTIME_DIR, "wayland-0")
+      : `/run/user/${uid}/wayland-0`;
+    if (fs.existsSync(waylandSocket)) {
+      process.env.XDG_SESSION_TYPE = "wayland";
+      if (!process.env.WAYLAND_DISPLAY) {
+        process.env.WAYLAND_DISPLAY = "wayland-0";
+      }
+    } else {
+      process.env.XDG_SESSION_TYPE = "x11";
+      if (!process.env.DISPLAY) {
+        process.env.DISPLAY = ":0";
+      }
+    }
+  }
+}
+
 function isWaylandSession(): boolean {
-  return process.env.XDG_SESSION_TYPE === "wayland" || !!process.env.WAYLAND_DISPLAY;
+  // If the env vars are present, trust them.
+  if (process.env.XDG_SESSION_TYPE === "wayland" || !!process.env.WAYLAND_DISPLAY) {
+    return true;
+  }
+  // If env vars are stripped, infer from the Wayland socket so we never
+  // accidentally run X11-only code (globalShortcut) on a Wayland session.
+  const runtimeDir =
+    process.env.XDG_RUNTIME_DIR || `/run/user/${process.getuid?.() ?? 0}`;
+  if (fs.existsSync(nodePath.join(runtimeDir, "wayland-0"))) {
+    return true;
+  }
+  return false;
 }
 
 function getKdotoolPath(): string {
-  return nodePath.join(process.env.HOME || "", ".local", "bin", "kdotool");
+  // Prefer PATH, fall back to the common local install location.
+  const fromPath = process.env.PATH?.split(nodePath.delimiter)
+    .map((dir) => nodePath.join(dir, "kdotool"))
+    .find((p) => {
+      try {
+        fs.accessSync(p, fs.constants.X_OK);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+  return fromPath || nodePath.join(process.env.HOME || "", ".local", "bin", "kdotool");
 }
+
+// Apply immediately so the rest of the module (and importers) get a working env.
+ensureLinuxSessionEnv();
 
 function hasKdotool(): boolean {
   try {

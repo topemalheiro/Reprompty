@@ -6,57 +6,11 @@
  * Register: claude mcp add reprompty -- npx tsx path/to/server.ts
  */
 
-import * as fs from "node:fs";
-import * as os from "node:os";
-
-/**
- * Some MCP clients (e.g. Kimi Code: CLI) spawn the server with a sanitized
- * environment that strips graphical session variables. Restore the bare
- * minimum so kdotool / KWin / D-Bus work on KDE Wayland.
- */
-function restoreSessionEnvironment(): void {
-  const uid = process.getuid?.() ?? os.userInfo().uid;
-  const runtimeDir = process.env.XDG_RUNTIME_DIR || `/run/user/${uid}`;
-  if (!process.env.XDG_RUNTIME_DIR && fs.existsSync(runtimeDir)) {
-    process.env.XDG_RUNTIME_DIR = runtimeDir;
-  }
-
-  if (!process.env.DBUS_SESSION_BUS_ADDRESS && process.env.XDG_RUNTIME_DIR) {
-    const busPath = `${process.env.XDG_RUNTIME_DIR}/bus`;
-    if (fs.existsSync(busPath)) {
-      process.env.DBUS_SESSION_BUS_ADDRESS = `unix:path=${busPath}`;
-    }
-  }
-
-  if (!process.env.XDG_SESSION_TYPE) {
-    // Prefer Wayland when a Wayland socket exists; otherwise fall back to x11.
-    if (process.env.XDG_RUNTIME_DIR && fs.existsSync(`${process.env.XDG_RUNTIME_DIR}/wayland-0`)) {
-      process.env.XDG_SESSION_TYPE = "wayland";
-      if (!process.env.WAYLAND_DISPLAY) {
-        process.env.WAYLAND_DISPLAY = "wayland-0";
-      }
-    } else {
-      process.env.XDG_SESSION_TYPE = "x11";
-      if (!process.env.DISPLAY) {
-        process.env.DISPLAY = ":0";
-      }
-    }
-  }
-
-  // If WAYLAND_DISPLAY is just a basename, prefix it with the runtime dir
-  if (
-    process.env.WAYLAND_DISPLAY &&
-    !process.env.WAYLAND_DISPLAY.includes("/") &&
-    process.env.XDG_RUNTIME_DIR
-  ) {
-    const fullPath = `${process.env.XDG_RUNTIME_DIR}/${process.env.WAYLAND_DISPLAY}`;
-    if (fs.existsSync(fullPath)) {
-      process.env.WAYLAND_DISPLAY = fullPath;
-    }
-  }
-}
-
-restoreSessionEnvironment();
+// Some MCP clients (e.g. Kimi Code: CLI) spawn the server with a sanitized
+// environment that strips graphical session variables. Restore them before
+// any platform code runs.
+import { ensureLinuxSessionEnv } from "../platform/linux.js";
+ensureLinuxSessionEnv();
 
 import { getTools, callTool } from "./index.js";
 
