@@ -916,6 +916,7 @@ export async function detectWindows(): Promise<DetectedWindow[]> {
   const now = Date.now();
   if (
     lastDetectWindowsResult &&
+    lastDetectWindowsResult.length > 0 &&
     now - lastDetectWindowsAt < DETECT_WINDOWS_THROTTLE_MS
   ) {
     return lastDetectWindowsResult;
