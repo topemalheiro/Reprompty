@@ -15,6 +15,19 @@ Reprompty is an AI agent orchestration framework for Linux (KDE Wayland) that en
 
 Window detection uses `kdotool` for native Wayland windows. `wmctrl` is used as fallback for XWayland windows. Layout positioning uses `kdotool` (Wayland) or `xdotool` (X11).
 
+## Using This Skill
+
+This skill auto-loads when you open the Reprompty project in Kimi Code: CLI, Kilo Code:, or Codex. When it is not auto-loaded, invoke it manually with the slash command:
+
+```
+/skill:reprompty
+```
+
+**Important:** In Kimi Code: and Kilo Code:, the slash command must include the `/skill:` prefix. Send it as its own message, or place it at the very start of your prompt. Because of a current client-side behavior, typing `/skill:reprompty` and then continuing to type on the same line may cause the rest of your prompt to be cleared. To avoid that, either:
+
+- Let the skill auto-load from the project (no manual command needed), or
+- Send `/skill:reprompty` first, then send your actual request in a follow-up message.
+
 ## Architecture
 
 ```
