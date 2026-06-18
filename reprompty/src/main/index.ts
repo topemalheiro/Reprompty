@@ -2,6 +2,11 @@
 // REPROMPTY - Electron Main Process
 // ============================================================================
 
+// Restore session env vars before any Electron/KWin/D-Bus code runs.
+// .desktop autostart sometimes strips XDG_/WAYLAND_/DBUS_ variables.
+import { ensureLinuxSessionEnv } from "../platform/linux.js";
+ensureLinuxSessionEnv();
+
 import fs from "node:fs";
 import nodePath from "node:path";
 import { join } from "node:path";
@@ -112,6 +117,13 @@ console.log("[Main] Electron modules loaded");
 console.log("[Main] app:", typeof electron.app);
 console.log("[Main] nativeImage:", typeof electron.nativeImage);
 console.log("[Main] BrowserWindow:", typeof electron.BrowserWindow);
+console.log("[Main] Session env:", {
+  XDG_SESSION_TYPE: process.env.XDG_SESSION_TYPE,
+  WAYLAND_DISPLAY: process.env.WAYLAND_DISPLAY,
+  DISPLAY: process.env.DISPLAY,
+  XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR,
+  DBUS_SESSION_BUS_ADDRESS: process.env.DBUS_SESSION_BUS_ADDRESS?.replace(/=.*/, "=..."),
+});
 
 // ============================================================================
 // APP SETUP
@@ -346,10 +358,16 @@ electron.app.whenReady().then(() => {
   }
 
   // Register global shortcuts for layout slots (skip on Wayland — Electron's
-  // globalShortcut is X11-based and can destabilize Plasma/KWin)
+  // globalShortcut is X11-based and can destabilize Plasma/KWin).
+  // Also skip in safe-start mode or when explicitly disabled.
+  const safeStart = process.env.REPROMPTY_SAFE_START === "1";
   const isWaylandSession =
-    process.env.XDG_SESSION_TYPE === "wayland" || !!process.env.WAYLAND_DISPLAY;
-  if (!isWaylandSession) {
+    process.env.XDG_SESSION_TYPE === "wayland" ||
+    !!process.env.WAYLAND_DISPLAY ||
+    fs.existsSync("/run/user/" + (process.getuid?.() || 0) + "/wayland-0");
+  const disableGlobalShortcuts =
+    safeStart || process.env.REPROMPTY_DISABLE_GLOBAL_SHORTCUTS === "1";
+  if (!isWaylandSession && !disableGlobalShortcuts) {
     try {
       const slots = layoutManager.listSlots();
       for (const slot of slots) {
@@ -369,20 +387,25 @@ electron.app.whenReady().then(() => {
       console.error("[GlobalShortcut] Registration failed:", err);
     }
   } else {
-    console.log("[GlobalShortcut] Skipping registration on Wayland session");
+    if (disableGlobalShortcuts) {
+      console.log("[GlobalShortcut] Skipping registration (safe-start or disabled)");
+    } else {
+      console.log("[GlobalShortcut] Skipping registration on Wayland session");
+    }
   }
 
-  // Start window auto-detection polling (every 10 seconds, or disabled via env).
-  // Defer the first detection by 3s so Plasma/KWin isn't hit with D-Bus traffic
-  // while the app is still opening.
-  const pollingDisabled = process.env.REPROMPTY_DISABLE_WINDOW_POLL === "1";
-  if (!pollingDisabled) {
+  // Start window auto-detection polling (off by default on Linux; enable with
+  // REPROMPTY_ENABLE_WINDOW_POLL=1). Constant kdotool/KWin traffic at login
+  // destabilizes Plasma on Wayland.
+  const pollingEnabled = process.env.REPROMPTY_ENABLE_WINDOW_POLL === "1";
+  if (pollingEnabled) {
+    console.log("[WindowPolling] Enabled via REPROMPTY_ENABLE_WINDOW_POLL");
     setTimeout(async () => {
       try {
         const windows = await platform.detectWindows();
         mainWindow?.webContents?.send("windows-detected", windows);
-      } catch {
-        // Ignore detection errors during initial detection
+      } catch (err) {
+        console.error("[WindowPolling] Initial detection error:", err);
       }
     }, 3000);
 
@@ -390,10 +413,12 @@ electron.app.whenReady().then(() => {
       try {
         const windows = await platform.detectWindows();
         mainWindow?.webContents?.send("windows-detected", windows);
-      } catch {
-        // Ignore detection errors during polling
+      } catch (err) {
+        console.error("[WindowPolling] Poll error:", err);
       }
     }, 10000);
+  } else {
+    console.log("[WindowPolling] Disabled by default. Set REPROMPTY_ENABLE_WINDOW_POLL=1 to enable.");
   }
 });
 

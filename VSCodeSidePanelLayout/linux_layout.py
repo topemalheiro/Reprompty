@@ -28,9 +28,43 @@ import socket
 import struct
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
 from typing import Optional, Dict, Any, Tuple
+
+# =============================================================================
+# Session environment restoration
+# =============================================================================
+
+def ensure_linux_session_env():
+    """Restore XDG_/WAYLAND_/DBUS_ env vars stripped by some launchers."""
+    uid = os.getuid()
+    runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
+    if not runtime_dir:
+        runtime_dir = f"/run/user/{uid}"
+        if os.path.isdir(runtime_dir):
+            os.environ["XDG_RUNTIME_DIR"] = runtime_dir
+
+    if not os.environ.get("DBUS_SESSION_BUS_ADDRESS") and runtime_dir:
+        bus_path = os.path.join(runtime_dir, "bus")
+        if os.path.exists(bus_path):
+            os.environ["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={bus_path}"
+
+    if not os.environ.get("XDG_SESSION_TYPE"):
+        wayland_socket = os.path.join(runtime_dir or f"/run/user/{uid}", "wayland-0")
+        if os.path.exists(wayland_socket):
+            os.environ["XDG_SESSION_TYPE"] = "wayland"
+            if not os.environ.get("WAYLAND_DISPLAY"):
+                os.environ["WAYLAND_DISPLAY"] = "wayland-0"
+        else:
+            os.environ["XDG_SESSION_TYPE"] = "x11"
+            if not os.environ.get("DISPLAY"):
+                os.environ["DISPLAY"] = ":0"
+
+
+# Global lock so the daemon processes one layout request at a time.
+_layout_lock = threading.Lock()
 
 # =============================================================================
 # Minimal stdlib WebSocket client for CDP
@@ -1053,6 +1087,7 @@ def run_layout(args: argparse.Namespace) -> dict:
 
 def daemon_main():
     """Run as a background daemon listening on a Unix domain socket."""
+    ensure_linux_session_env()
     socket_path = os.path.join(
         os.environ.get("XDG_RUNTIME_DIR", "/tmp"),
         "reprompty",
@@ -1084,16 +1119,18 @@ def daemon_main():
                 if cmd.get("cmd") == "ping":
                     resp = {"ok": True, "message": "pong"}
                 elif cmd.get("cmd") == "list_windows":
-                    wins = []
-                    for w in find_vscode_window_list():
-                        wins.append({
-                            "uuid": w[0],
-                            "caption": w[1],
-                        })
+                    with _layout_lock:
+                        wins = []
+                        for w in find_vscode_window_list():
+                            wins.append({
+                                "uuid": w[0],
+                                "caption": w[1],
+                            })
                     resp = {"ok": True, "message": f"{len(wins)} window(s) found", "data": wins}
                 else:
-                    args = build_args_from_json(cmd)
-                    resp = run_layout(args)
+                    with _layout_lock:
+                        args = build_args_from_json(cmd)
+                        resp = run_layout(args)
                 conn.sendall((json.dumps(resp) + "\n").encode("utf-8"))
             except Exception as e:
                 try:
@@ -1114,7 +1151,7 @@ def find_vscode_window_list() -> list:
     """Return a list of (uuid_or_id, caption) for all VS Code: windows."""
     results = []
     if _has_kdotool():
-        for term in ["Visual Studio Code:", "Kilo Code:", "Kimi Code:", "VSCodium", "Code: - OSS"]:
+        for term in ["Visual Studio Code", "Kilo Code", "Kimi Code", "VSCodium", "Code: - OSS"]:
             try:
                 proc = subprocess.run(
                     [KDOTOOL_PATH, "search", "--title", term],
@@ -1189,6 +1226,7 @@ def try_daemon_socket(args: argparse.Namespace) -> Optional[dict]:
 
 
 def main():
+    ensure_linux_session_env()
     parser = argparse.ArgumentParser(description="VS Code: Linux Layout")
     parser.add_argument("--once", action="store_true", help="Run once and exit")
     parser.add_argument("--daemon", action="store_true", help="Run as background daemon listening on Unix socket")
