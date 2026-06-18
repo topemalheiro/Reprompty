@@ -26,6 +26,7 @@ interface LayoutsConfig {
 export interface LayoutTarget {
   windowTitle?: string;
   windowHandle?: number;
+  kdotoolHandle?: string;
 }
 
 export interface LayoutApplyResult {

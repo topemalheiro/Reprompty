@@ -286,8 +286,8 @@ const BUILT_IN_TOOLS: MCPTool[] = [
           description: "Optional: target a specific window by title",
         },
         windowHandle: {
-          type: "number",
-          description: "Optional: exact window handle to target. Preferred over windowTitle",
+          type: ["number", "string"],
+          description: "Optional: exact window handle to target. On Linux/Wayland this can be a kdotool UUID handle like {a1b2c3d4-...}. Preferred over windowTitle.",
         },
       },
       required: ["slot"],
@@ -528,13 +528,84 @@ function parseWindowHandle(value: unknown): number | undefined {
   }
 
   if (typeof value === "string") {
-    const parsed = Number.parseInt(value.trim(), 10);
+    const trimmed = value.trim();
+    const parsed = Number.parseInt(trimmed, 10);
     if (Number.isFinite(parsed) && parsed > 0) {
       return parsed;
     }
   }
 
   return undefined;
+}
+
+function parseKdotoolHandle(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  // kdotool handles are UUIDs wrapped in braces, e.g. {a1b2c3d4-...}
+  if (/^\{[0-9a-fA-F-]{36}\}$/.test(trimmed)) {
+    return trimmed;
+  }
+  return undefined;
+}
+
+function resolveLayoutTarget(
+  args: Record<string, unknown>
+): Promise<LayoutTarget & { reason?: string }> {
+  return new Promise(async (resolve) => {
+    const windowTitle =
+      typeof args.windowTitle === "string" ? args.windowTitle.trim() || undefined : undefined;
+    const numericHandle = parseWindowHandle(args.windowHandle);
+    const kdotoolHandle = parseKdotoolHandle(args.windowHandle);
+
+    // Direct kdotool UUID handle provided
+    if (kdotoolHandle) {
+      resolve({ kdotoolHandle, reason: "explicit kdotool handle" });
+      return;
+    }
+
+    // Direct numeric handle (PID on Linux) provided
+    if (numericHandle) {
+      resolve({ windowHandle: numericHandle, reason: "explicit numeric handle" });
+      return;
+    }
+
+    // We need to detect windows to resolve by title or to find the active one
+    const windows = await detectWindows();
+
+    if (windowTitle) {
+      const match = windows.find((w) => w.title.includes(windowTitle));
+      if (match?.kdotoolHandle) {
+        resolve({
+          kdotoolHandle: match.kdotoolHandle,
+          windowTitle: match.title,
+          reason: `matched title "${windowTitle}"`,
+        });
+        return;
+      }
+      // Fall back to passing the title if no kdotool handle is available
+      resolve({ windowTitle, reason: `title provided but no kdotool handle found` });
+      return;
+    }
+
+    // No target specified: try to find the active VS Code: window
+    if (windows.length > 0) {
+      // Prefer the window on the current desktop if we can tell
+      const currentDesktopWindow = windows.find((w) => w.isCurrentDesktop);
+      const chosen = currentDesktopWindow ?? windows[0];
+      if (chosen?.kdotoolHandle) {
+        resolve({
+          kdotoolHandle: chosen.kdotoolHandle,
+          windowTitle: chosen.title,
+          reason: currentDesktopWindow
+            ? "active/current desktop window"
+            : "first detected window (no active match)",
+        });
+        return;
+      }
+    }
+
+    resolve({ reason: "no target specified and no VS Code: windows detected" });
+  });
 }
 
 function formatWindowSummary(window: DetectedWindow): string {
@@ -1409,11 +1480,7 @@ export async function callTool(
           .join(", ");
         return textResult(`Slot "${slotKey}" not found. Available: ${available}`, true);
       }
-      const target: LayoutTarget = {
-        windowTitle:
-          typeof args.windowTitle === "string" ? args.windowTitle.trim() || undefined : undefined,
-        windowHandle: parseWindowHandle(args.windowHandle),
-      };
+      const target = await resolveLayoutTarget(args);
 
       logToolEvent("apply_layout request", {
         slot: slot.letter,
