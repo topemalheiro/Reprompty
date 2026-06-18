@@ -1,3 +1,8 @@
+---
+name: reprompty
+description: Reprompty MCP tool reference and workflows for multi-window AI agent orchestration on Linux KDE Wayland.
+---
+
 # Reprompty Skill
 
 ## Overview
@@ -73,9 +78,25 @@ Add to VS Code: `settings.json`:
 }
 ```
 
-### Kimi Code: Workaround
+### Kimi Code: Configuration
 
-Kimi Code: does not yet support MCP. Use Reprompty's **Send Prompt** UI tab to send prompts to Kimi windows, or route through Kilo/Codex which have MCP enabled.
+Kimi Code: CLI supports MCP via `~/.config/kimi/mcp.json` or a project `.kimi/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "reprompty": {
+      "command": "node",
+      "args": [
+        "/home/tope/Projects/OS-Toolkit/Reprompty/reprompty/dist/mcp/server.js"
+      ],
+      "disabled": false
+    }
+  }
+}
+```
+
+Build the server first with `npm run build:mcp` from the `reprompty/` directory.
 
 ---
 
