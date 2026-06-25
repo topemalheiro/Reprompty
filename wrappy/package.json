@@ -1,0 +1,77 @@
+{
+  "name": "wrappy",
+  "displayName": "Wrappy",
+  "description": "Barebones multi-model CLI wrapper for VS Code:",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/topemalheiro/Reprompty.git",
+    "directory": "wrappy"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onView:wrappy.chatView"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "secondarySidebar": [
+        {
+          "id": "wrappy",
+          "title": "Wrappy",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "wrappy": [
+        {
+          "type": "webview",
+          "id": "wrappy.chatView",
+          "name": "Chat"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "wrappy.openChat",
+        "title": "Open Wrappy Chat",
+        "category": "Wrappy"
+      }
+    ],
+    "configuration": {
+      "title": "Wrappy",
+      "properties": {
+        "wrappy.cliPath": {
+          "type": "string",
+          "default": "kimi",
+          "description": "Path to the CLI executable to wrap (e.g. kimi, codex, glm)."
+        },
+        "wrappy.cliArgs": {
+          "type": "array",
+          "default": [],
+          "description": "Extra arguments to pass to the CLI on every invocation.",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.74.0",
+    "typescript": "^5.0.0"
+  }
+}
