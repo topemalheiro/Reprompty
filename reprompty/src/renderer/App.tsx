@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import ScriptsTab from "./ScriptsTab";
 import PortainerTab from "./PortainerTab";
 import LlamaCppTab from "./LlamaCppTab";
@@ -254,6 +254,37 @@ function App() {
       setStatus(`Failed to load task presets: ${err}`);
     }
   };
+
+  const refreshWindows = async () => {
+    try {
+      const windows = await window.electronAPI.detectWindows();
+      setDetectedWindows(windows);
+    } catch (err) {
+      setStatus(`Failed to detect windows: ${err}`);
+    }
+  };
+
+  const lastWindowsRefreshRef = useRef<number>(0);
+  const WINDOWS_REFRESH_THROTTLE_MS = 2000;
+
+  useEffect(() => {
+    if (activeTab !== "windows") return;
+
+    const now = Date.now();
+    // Defer the very first refresh so we don't race KWin/Plasma at startup.
+    if (lastWindowsRefreshRef.current === 0) {
+      const timeout = setTimeout(() => {
+        lastWindowsRefreshRef.current = Date.now();
+        void refreshWindows();
+      }, 2500);
+      return () => clearTimeout(timeout);
+    }
+
+    if (now - lastWindowsRefreshRef.current > WINDOWS_REFRESH_THROTTLE_MS) {
+      lastWindowsRefreshRef.current = now;
+      void refreshWindows();
+    }
+  }, [activeTab]);
 
   const saveTaskPreset = async () => {
     const name = presetNameInput.trim();
@@ -540,9 +571,18 @@ function App() {
               }}
             >
               <h2 style={styles.panelTitle}>Detected Windows</h2>
-              <span style={{ color: "#888", fontSize: 12 }}>
-                {detectedWindows.length} found (auto-refreshes)
-              </span>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <button
+                  type="button"
+                  style={{ ...styles.secondaryBtn, padding: "4px 10px", fontSize: 12 }}
+                  onClick={() => void refreshWindows()}
+                >
+                  Refresh
+                </button>
+                <span style={{ color: "#888", fontSize: 12 }}>
+                  {detectedWindows.length} found
+                </span>
+              </div>
             </div>
             <div style={styles.desktopHint}>
               Desktop labels refresh from backend polling. Desktop-aware spawns now stay on your
