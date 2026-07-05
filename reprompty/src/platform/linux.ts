@@ -21,9 +21,11 @@ export interface WindowInfo {
 
 const VS_CODE_PROCESS_NAMES = new Set(["code", "code-oss", "vscodium", "codium"]);
 const KILO_CODE_PROCESS_NAMES = new Set(["kilocode"]);
+const KIMI_CODE_PROCESS_NAMES = new Set(["kimi-code"]);
 const SUPPORTED_EDITOR_PROCESS_NAMES = new Set([
   ...VS_CODE_PROCESS_NAMES,
   ...KILO_CODE_PROCESS_NAMES,
+  ...KIMI_CODE_PROCESS_NAMES,
 ]);
 
 /** Known editor window title substrings for detection */
@@ -294,7 +296,9 @@ export function isSupportedEditorProcessName(name?: string | null): boolean {
 }
 
 export function fallbackProcessNameFromTitle(title: string): string {
-  return title.includes("Kilo Code") || title.includes("Kimi Code") ? "kilocode" : "code";
+  if (title.includes("Kimi Code")) return "kimi-code";
+  if (title.includes("Kilo Code")) return "kilocode";
+  return "code";
 }
 
 export function buildKiloPipeCandidates(pid: number): string[] {

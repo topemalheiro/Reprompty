@@ -14,11 +14,12 @@ describe("windows detection helpers", () => {
     expect(normalizeEditorProcessName(" kilocode ")).toBe("kilocode");
   });
 
-  it("accepts Code, Code.real, and kilocode as supported editor processes", () => {
+  it("accepts Code, Code.real, kilocode, and kimi-code as supported editor processes", () => {
     expect(isSupportedEditorProcessName("Code")).toBe(true);
     expect(isSupportedEditorProcessName("Code.real")).toBe(true);
     expect(isSupportedEditorProcessName("Code.real.exe")).toBe(true);
     expect(isSupportedEditorProcessName("kilocode")).toBe(true);
+    expect(isSupportedEditorProcessName("kimi-code")).toBe(true);
     expect(isSupportedEditorProcessName("cursor")).toBe(false);
   });
 
@@ -26,7 +27,9 @@ describe("windows detection helpers", () => {
     expect(resolveDetectedWindowProcessName("Code.real", "repo - Visual Studio Code")).toBe("Code.real");
     expect(resolveDetectedWindowProcessName("", "repo - Visual Studio Code")).toBe("Code");
     expect(resolveDetectedWindowProcessName(undefined, "repo - Kilo Code")).toBe("kilocode");
+    expect(resolveDetectedWindowProcessName(undefined, "repo - Kimi Code")).toBe("kimi-code");
     expect(fallbackProcessNameFromTitle("repo - Kilo Code")).toBe("kilocode");
+    expect(fallbackProcessNameFromTitle("repo - Kimi Code")).toBe("kimi-code");
   });
 
   it("builds pipe candidates for kilo and legacy roo naming", () => {

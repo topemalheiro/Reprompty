@@ -22,6 +22,8 @@ const JSONRPC_VERSION = "2.0";
 const PROTOCOL_VERSION = "2024-11-05";
 
 let buffer = "";
+let pendingRequests = 0;
+let stdinEnded = false;
 
 process.stdin.setEncoding("utf-8");
 process.stdin.on("data", (chunk: string) => {
@@ -36,9 +38,17 @@ process.stdin.on("data", (chunk: string) => {
     if (!trimmed) continue;
     try {
       const msg = JSON.parse(trimmed);
-      handleMessage(msg).catch((err) => {
-        sendError(msg.id, -32603, String(err));
-      });
+      pendingRequests++;
+      handleMessage(msg)
+        .catch((err) => {
+          sendError(msg.id, -32603, String(err));
+        })
+        .finally(() => {
+          pendingRequests--;
+          if (stdinEnded && pendingRequests === 0) {
+            process.exit(0);
+          }
+        });
     } catch {
       // Ignore malformed JSON
     }
@@ -46,7 +56,11 @@ process.stdin.on("data", (chunk: string) => {
 });
 
 process.stdin.on("end", () => {
-  process.exit(0);
+  stdinEnded = true;
+  if (pendingRequests === 0) {
+    process.exit(0);
+  }
+  // Otherwise wait for in-flight requests to finish before exiting.
 });
 
 function send(msg: Record<string, unknown>) {

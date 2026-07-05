@@ -17,12 +17,13 @@ describe("linux detection helpers", () => {
     expect(normalizeEditorProcessName("kilocode")).toBe("kilocode");
   });
 
-  it("accepts Code, Code:-OSS, VSCodium, codium, and kilocode as supported editor processes", () => {
+  it("accepts Code, Code:-OSS, VSCodium, codium, kilocode, and kimi-code as supported editor processes", () => {
     expect(isSupportedEditorProcessName("code")).toBe(true);
     expect(isSupportedEditorProcessName("code-oss")).toBe(true);
     expect(isSupportedEditorProcessName("vscodium")).toBe(true);
     expect(isSupportedEditorProcessName("codium")).toBe(true);
     expect(isSupportedEditorProcessName("kilocode")).toBe(true);
+    expect(isSupportedEditorProcessName("kimi-code")).toBe(true);
     expect(isSupportedEditorProcessName("code.exe")).toBe(true);
     expect(isSupportedEditorProcessName("cursor")).toBe(false);
     expect(isSupportedEditorProcessName("nvim")).toBe(false);
@@ -32,8 +33,10 @@ describe("linux detection helpers", () => {
     expect(resolveDetectedWindowProcessName("code-oss", "repo - Visual Studio Code")).toBe("code-oss");
     expect(resolveDetectedWindowProcessName("", "repo - Visual Studio Code")).toBe("code");
     expect(resolveDetectedWindowProcessName(undefined, "repo - Kilo Code")).toBe("kilocode");
+    expect(resolveDetectedWindowProcessName(undefined, "repo - Kimi Code")).toBe("kimi-code");
     expect(fallbackProcessNameFromTitle("repo - VSCodium")).toBe("code");
     expect(fallbackProcessNameFromTitle("repo - Kilo Code")).toBe("kilocode");
+    expect(fallbackProcessNameFromTitle("repo - Kimi Code")).toBe("kimi-code");
   });
 
   it("builds pipe candidates for kilo and legacy roo naming on Linux", () => {
