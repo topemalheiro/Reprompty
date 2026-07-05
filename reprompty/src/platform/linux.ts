@@ -1057,7 +1057,8 @@ export async function detectWindows(): Promise<DetectedWindow[]> {
     const folderPath = titleMatch ? titleMatch[1].trim() : "";
     const processName = resolveDetectedWindowProcessName(rawProcessName, title);
     const normalizedProcessName = normalizeEditorProcessName(processName);
-    const isKilo = normalizedProcessName === "kilocode" || title.includes("Kilo Code") || title.includes("Kimi Code");
+    const isKilo = normalizedProcessName === "kilocode" || title.includes("Kilo Code");
+    const isKimi = title.includes("Kimi Code");
     const pipePath = resolveKiloPipePath(pid);
     const pipeExists = Boolean(pipePath);
     const agentState = findWindowAgentState(agentStates, title);
@@ -1067,7 +1068,9 @@ export async function detectWindows(): Promise<DetectedWindow[]> {
       ? "kilo-code"
       : isKilo
       ? "kilo-code"
-      : "kilo-code";
+      : isKimi
+      ? "kimi-code"
+      : "unknown";
     const backgroundRoute = resolveBackgroundRoute(activeAgent, availableAgents, pipeExists);
     const desktopAssignment = desktopByHandle.get(handle);
     const sendMethod: DetectedWindow["sendMethod"] =
@@ -1104,7 +1107,8 @@ export async function detectWindows(): Promise<DetectedWindow[]> {
 
       const titleMatch = win.title.match(/^(.+?)\s+-\s+(Visual Studio Code|Kilo Code|Kimi Code|VSCodium|Code: - OSS)/);
       const folderPath = titleMatch ? titleMatch[1].trim() : "";
-      const isKilo = win.processName === "kilocode" || win.title.includes("Kilo Code") || win.title.includes("Kimi Code");
+      const isKilo = win.processName === "kilocode" || win.title.includes("Kilo Code");
+      const isKimi = win.title.includes("Kimi Code");
       const pipePath = resolveKiloPipePath(win.pid);
       const pipeExists = Boolean(pipePath);
       const agentState = findWindowAgentState(agentStates, win.title);
@@ -1114,7 +1118,9 @@ export async function detectWindows(): Promise<DetectedWindow[]> {
         ? "kilo-code"
         : isKilo
         ? "kilo-code"
-        : "kilo-code";
+        : isKimi
+        ? "kimi-code"
+        : "unknown";
       const backgroundRoute = resolveBackgroundRoute(activeAgent, availableAgents, pipeExists);
       const sendMethod: DetectedWindow["sendMethod"] =
         backgroundRoute === "foreground" ? "foreground" : "background";

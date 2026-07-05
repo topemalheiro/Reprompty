@@ -513,8 +513,8 @@ $results | ForEach-Object { Write-Output $_ }
       const folderPath = titleMatch ? titleMatch[1].trim() : "";
       const processName = resolveDetectedWindowProcessName(rawProcessName, title);
       const normalizedProcessName = normalizeEditorProcessName(processName);
-      const isKilo =
-        normalizedProcessName === "kilocode" || title.includes("Kilo Code") || title.includes("Kimi Code");
+      const isKilo = normalizedProcessName === "kilocode" || title.includes("Kilo Code");
+      const isKimi = title.includes("Kimi Code");
 
       // Probe for IPC pipe (supports Kilo and legacy Roo pipe naming)
       const pipePath = resolveKiloPipePath(pid);
@@ -527,7 +527,9 @@ $results | ForEach-Object { Write-Output $_ }
         ? "kilo-code"
         : isKilo
         ? "kilo-code"
-        : "kilo-code"; // Default "start with" agent per user request
+        : isKimi
+        ? "kimi-code"
+        : "unknown";
       const backgroundRoute = resolveBackgroundRoute(
         activeAgent,
         availableAgents,
