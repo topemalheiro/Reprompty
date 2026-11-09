@@ -16,6 +16,7 @@ import { connectionManager } from "../core/connection-manager.js";
 import { layoutManager } from "../core/layout-manager.js";
 import { listVirtualDesktops } from "../core/virtual-desktop-manager.js";
 import { getOrCreateIpcClient, removeIpcClient } from "../core/ipc-client.js";
+import { getCdpWindowSignature } from "../core/cdp-client.js";
 import type { VSCodeWindowConfig } from "../core/connection-manager.js";
 import * as platform from "../platform/index.js";
 
@@ -417,10 +418,67 @@ electron.app.whenReady().then(() => {
         console.error("[WindowPolling] Poll error:", err);
       }
     }, 10000);
+  } else if (process.env.REPROMPTY_DISABLE_WINDOW_WATCH === "1") {
+    console.log("[WindowWatch] Disabled via REPROMPTY_DISABLE_WINDOW_WATCH");
   } else {
-    console.log("[WindowPolling] Disabled by default. Set REPROMPTY_ENABLE_WINDOW_POLL=1 to enable.");
+    startWindowWatch();
   }
 });
+
+// Keep the Windows tab current without polling KWin: watch VS Code's CDP target
+// list (one localhost HTTP request) and run full detection only when the set of
+// editor windows or agent panels changes. Showing Reprompty from the tray also
+// refreshes, which covers editors that don't expose CDP.
+const WINDOW_WATCH_START_DELAY_MS = 15000;
+const WINDOW_WATCH_INTERVAL_MS = 3000;
+
+function startWindowWatch(): void {
+  let lastSignature: string | null = null;
+  let pendingSignature: string | null = null;
+  let busy = false;
+
+  const pushWindows = async (force: boolean) => {
+    const windows = await platform.detectWindows({ force });
+    mainWindow?.webContents?.send("windows-detected", windows);
+  };
+
+  const tick = async () => {
+    if (busy) return;
+    busy = true;
+    try {
+      const port = platform.getCdpPort();
+      // No VS Code (or no CDP) reads as "no windows", so closing the last one still refreshes.
+      const signature = port ? await getCdpWindowSignature(port).catch(() => "") : "";
+      if (signature === lastSignature) {
+        pendingSignature = null;
+        return;
+      }
+      // Wait one more tick for the list to settle, so VS Code restoring several
+      // windows at once costs one detection instead of one per window.
+      if (signature !== pendingSignature) {
+        pendingSignature = signature;
+        return;
+      }
+      // Recorded before detecting so a failing detection isn't retried every tick.
+      lastSignature = signature;
+      pendingSignature = null;
+      await pushWindows(true);
+    } catch (err) {
+      console.error("[WindowWatch] Detection error:", err);
+    } finally {
+      busy = false;
+    }
+  };
+
+  console.log("[WindowWatch] Watching CDP targets for window changes");
+  setTimeout(() => {
+    void tick();
+    setInterval(() => void tick(), WINDOW_WATCH_INTERVAL_MS);
+    mainWindow?.on("show", () => {
+      pushWindows(false).catch((err) => console.error("[WindowWatch] Detection error:", err));
+    });
+  }, WINDOW_WATCH_START_DELAY_MS);
+}
 
 electron.app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {

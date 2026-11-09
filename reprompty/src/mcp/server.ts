@@ -13,6 +13,30 @@ import { ensureLinuxSessionEnv } from "../platform/linux.js";
 ensureLinuxSessionEnv();
 
 import { getTools, callTool } from "./index.js";
+import {
+  getCurrentDesktopUuid,
+  setCurrentDesktopUuid,
+} from "../core/virtual-desktop-manager-linux.js";
+
+// Agents must never move the user to another virtual desktop, whatever a tool runs.
+async function callToolOnSameDesktop(
+  toolName: string,
+  args: Record<string, unknown>
+): ReturnType<typeof callTool> {
+  const desktop = process.platform === "linux" ? getCurrentDesktopUuid() : null;
+  try {
+    return await callTool(toolName, args);
+  } finally {
+    if (desktop && getCurrentDesktopUuid() !== desktop) {
+      try {
+        setCurrentDesktopUuid(desktop);
+        console.error(`[Reprompty MCP] ${toolName} changed the virtual desktop; switched back`);
+      } catch (err) {
+        console.error(`[Reprompty MCP] Could not switch back after ${toolName}:`, err);
+      }
+    }
+  }
+}
 
 // ============================================================================
 // Stdio MCP Server (JSON-RPC over stdin/stdout)
@@ -114,7 +138,7 @@ async function handleMessage(msg: { id?: string | number; method?: string; param
       const toolArgs = (params?.arguments || {}) as Record<string, unknown>;
 
       try {
-        const result = await callTool(toolName, toolArgs);
+        const result = await callToolOnSameDesktop(toolName, toolArgs);
         sendResult(id!, result);
       } catch (err) {
         sendResult(id!, {

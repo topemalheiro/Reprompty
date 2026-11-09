@@ -976,13 +976,16 @@ export function resolveBackgroundRoute(
  * On Wayland falls back to process-based detection since wmctrl/xdotool
  * do not work for native Wayland windows.
  */
-export async function detectWindows(): Promise<DetectedWindow[]> {
+export async function detectWindows(options: { force?: boolean } = {}): Promise<DetectedWindow[]> {
   if (process.env.REPROMPTY_SAFE_MODE === "1") {
     return [];
   }
 
+  // force: the caller already knows the window set changed, so the cached
+  // result is stale (still one detection per change, not a poll).
   const now = Date.now();
   if (
+    !options.force &&
     lastDetectWindowsResult &&
     lastDetectWindowsResult.length > 0 &&
     now - lastDetectWindowsAt < DETECT_WINDOWS_THROTTLE_MS
