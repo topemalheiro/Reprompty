@@ -66,6 +66,20 @@ export interface ScriptActionResult {
 }
 
 const MAX_OUTPUT_LINES = 500;
+
+// Scripts started by an agent get REPROMPTY_BACKGROUND=1: don't switch desktop or keep focus.
+function scriptSpawnOptions(background: boolean): Parameters<typeof spawn>[2] {
+  const options: Parameters<typeof spawn>[2] = {
+    stdio: ["ignore", "pipe", "pipe"],
+  };
+  if (background) {
+    options.env = { ...process.env, REPROMPTY_BACKGROUND: "1" };
+  }
+  if (process.platform === "win32") {
+    options.windowsHide = true;
+  }
+  return options;
+}
 const HEADER_SCAN_LINE_LIMIT = 40;
 
 export const RESERVED_MCP_TOOL_NAMES = [
@@ -578,7 +592,7 @@ export class ScriptManager extends EventEmitter {
     }
   }
 
-  runScript(id: string): boolean {
+  runScript(id: string, options: { background?: boolean } = {}): boolean {
     const running = this.scripts.get(id);
     if (!running) {
       return false;
@@ -595,13 +609,7 @@ export class ScriptManager extends EventEmitter {
       running.outputLines = [];
       this.emitStatus(id, "starting");
 
-      const spawnOptions: Parameters<typeof spawn>[2] = {
-        stdio: ["ignore", "pipe", "pipe"],
-      };
-      if (process.platform === "win32") {
-        spawnOptions.windowsHide = true;
-      }
-      const proc = spawn(command, args, spawnOptions);
+      const proc = spawn(command, args, scriptSpawnOptions(Boolean(options.background)));
 
       running.process = proc;
       running.pid = proc.pid || null;
@@ -707,13 +715,7 @@ export class ScriptManager extends EventEmitter {
       const stderr: string[] = [];
 
       try {
-        const spawnOptions: Parameters<typeof spawn>[2] = {
-          stdio: ["ignore", "pipe", "pipe"],
-        };
-        if (process.platform === "win32") {
-          spawnOptions.windowsHide = true;
-        }
-        const proc = spawn(command, args, spawnOptions);
+        const proc = spawn(command, args, scriptSpawnOptions(true));
 
         proc.stdout?.on("data", (data: Buffer) => {
           const lines = data.toString().split("\n").filter((line) => line.trim());

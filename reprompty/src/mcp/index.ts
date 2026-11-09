@@ -34,7 +34,12 @@ import {
   getWorkspacePathFromPid,
   type DetectedWindow,
 } from "../platform/index.js";
-import { sendViaAgentCdp, isCdpAvailable } from "../core/cdp-client.js";
+import {
+  sendViaAgentCdp,
+  isCdpAvailable,
+  listClaudeSessions,
+  selectClaudeSession,
+} from "../core/cdp-client.js";
 import {
   buildSpawnTitleHints,
   findNewWindowCandidates,
@@ -160,6 +165,11 @@ const BUILT_IN_TOOLS: MCPTool[] = [
       properties: {
         connectionId: { type: "string", description: "ID of the connection to send to" },
         prompt: { type: "string", description: "The prompt to send" },
+        session: {
+          type: "string",
+          description:
+            "Claude Code only: switch the panel to this session from its Session history before sending. A session ID, or its name (or a unique part of it) as shown in the history list. See list_claude_sessions.",
+        },
         waitForResponse: {
           type: "boolean",
           description: "Wait for response (not implemented yet)",
@@ -232,6 +242,10 @@ const BUILT_IN_TOOLS: MCPTool[] = [
             properties: {
               connectionId: { type: "string" },
               prompt: { type: "string" },
+              session: {
+                type: "string",
+                description: "Claude Code only: session ID or name to switch to before this prompt",
+              },
             },
             required: ["connectionId", "prompt"],
           },
@@ -355,6 +369,45 @@ const BUILT_IN_TOOLS: MCPTool[] = [
     inputSchema: {
       type: "object",
       properties: {},
+    },
+  },
+  {
+    name: "list_claude_sessions",
+    description:
+      "List the sessions in a Claude Code window's Session history (Local tab): session ID, name, relative time, and which one is active. Use before send_prompt with a session.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        connectionId: { type: "string", description: "Connection whose window to read (ID or name)" },
+        windowTitle: {
+          type: "string",
+          description: "Window title to match instead of a connection",
+        },
+        query: {
+          type: "string",
+          description: "Filter with the history's own search box (finds sessions outside the initial list)",
+        },
+      },
+    },
+  },
+  {
+    name: "select_claude_session",
+    description:
+      "Switch a Claude Code window's panel to a session from its Session history without sending anything.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        session: {
+          type: "string",
+          description: "Session ID, or its name (or a unique part of it) as shown in the history list",
+        },
+        connectionId: { type: "string", description: "Connection whose window to use (ID or name)" },
+        windowTitle: {
+          type: "string",
+          description: "Window title to match instead of a connection",
+        },
+      },
+      required: ["session"],
     },
   },
   {
@@ -613,12 +666,14 @@ function formatWindowSummary(window: DetectedWindow): string {
 }
 
 function logToolEvent(message: string, details?: unknown): void {
+  // stderr, never stdout: on stdio transport stdout carries JSON-RPC frames only,
+  // and this fires on every tool call.
   if (details === undefined) {
-    console.log(`[Reprompty MCP] ${message}`);
+    console.error(`[Reprompty MCP] ${message}`);
     return;
   }
 
-  console.log(
+  console.error(
     `[Reprompty MCP] ${message} ${JSON.stringify(details)}`
   );
 }
@@ -1032,11 +1087,21 @@ async function executeSpawnWorkflow(
     };
   }
 
+  let layoutResult: Awaited<ReturnType<typeof layoutManager.applySlot>> | undefined;
+
   if (
     matchedWindow &&
     desktopActivationMode === "move-after-spawn" &&
     desktopResolution.desktop
   ) {
+    // Lay out before the move: Wayland doesn't resize windows on hidden desktops.
+    if (options.slot) {
+      layoutResult = await layoutManager.applySlot(options.slot.id, {
+        windowHandle: matchedWindow.handle,
+        windowTitle: matchedWindow.title,
+      });
+    }
+
     moveResult = await moveWindowToVirtualDesktop(
       matchedWindow.kdotoolHandle || matchedWindow.handle,
       desktopResolution.desktop
@@ -1153,7 +1218,7 @@ async function executeSpawnWorkflow(
     windowHandle: matchedWindow.handle,
     windowTitle: matchedWindow.title,
   };
-  const layoutResult = await layoutManager.applySlot(options.slot.id, target);
+  layoutResult ??= await layoutManager.applySlot(options.slot.id, target);
 
   logToolEvent("spawn workflow layout result", {
     requestedTarget: options.requestedTarget ?? null,
@@ -1258,6 +1323,8 @@ export async function callTool(
     case "send_prompt": {
       const connectionId = args.connectionId as string;
       const prompt = args.prompt as string;
+      const session =
+        typeof args.session === "string" && args.session.trim() ? args.session.trim() : undefined;
       const connection =
         connectionManager.getConnection(connectionId) ||
         connectionManager.getConnectionByName(connectionId);
@@ -1268,8 +1335,9 @@ export async function callTool(
 
       const cfg = connection.config as VSCodeWindowConfig;
 
-      // Try IPC first (fastest for Kilo Code:)
-      if (cfg.method === "background" && cfg.socketPath) {
+      // Try IPC first (fastest for Kilo Code:). A requested session means Claude Code,
+      // which only CDP can reach.
+      if (!session && cfg.method === "background" && cfg.socketPath) {
         try {
           const client = getOrCreateIpcClient(cfg.socketPath);
           const ready = await client.waitForReady();
@@ -1309,10 +1377,14 @@ export async function callTool(
           const result = await sendViaAgentCdp(port, prompt, {
             agent: extension,
             windowTitle: cfg.windowTitle,
+            session,
           });
           if (result.success) {
             connectionManager.updateConnectionStatus(connection.id, "active");
-            return textResult(`Sent to ${connection.name} via ${extension} CDP (background)`);
+            const inSession = result.session
+              ? ` in session "${result.session.name}" (${result.session.sessionId})`
+              : "";
+            return textResult(`Sent to ${connection.name} via ${extension} CDP (background)${inSession}`);
           }
           return textResult(
             `CDP send failed for ${connection.name}: ${result.error || "unknown error"}`,
@@ -1355,7 +1427,7 @@ export async function callTool(
     }
 
     case "daisy_chain": {
-      const prompts = args.prompts as Array<{ connectionId: string; prompt: string }>;
+      const prompts = args.prompts as Array<{ connectionId: string; prompt: string; session?: string }>;
       const continueOnError = (args.continueOnError as boolean) || false;
       const results: string[] = [];
 
@@ -1372,11 +1444,12 @@ export async function callTool(
         }
 
         const cfg = connection.config as VSCodeWindowConfig;
+        const session = promptTask.session?.trim() || undefined;
         try {
           let sent = false;
 
-          // Try IPC first
-          if (cfg.method === "background" && cfg.socketPath) {
+          // Try IPC first (not for a requested Claude session, which needs CDP)
+          if (!session && cfg.method === "background" && cfg.socketPath) {
             try {
               const client = getOrCreateIpcClient(cfg.socketPath);
               const ready = await client.waitForReady();
@@ -1418,11 +1491,13 @@ export async function callTool(
             const cdpResult = await sendViaAgentCdp(port, promptTask.prompt, {
               agent: extension,
               windowTitle: cfg.windowTitle,
+              session,
             });
             if (!cdpResult.success) {
               throw new Error(cdpResult.error || "CDP failed");
             }
-            results.push(`Sent to ${connection.name} (${extension} CDP)`);
+            const inSession = cdpResult.session ? `, session "${cdpResult.session.name}"` : "";
+            results.push(`Sent to ${connection.name} (${extension} CDP${inSession})`);
             sent = true;
           }
 
@@ -1450,7 +1525,7 @@ export async function callTool(
       if (!script) {
         return textResult(`Script not found: ${scriptId}`, true);
       }
-      const started = scriptManager.runScript(script.id);
+      const started = scriptManager.runScript(script.id, { background: true });
       return textResult(
         started ? `Started: ${script.name}` : `Failed to start: ${script.name}`,
         !started
@@ -1583,6 +1658,47 @@ export async function callTool(
         ),
         !available
       );
+    }
+
+    case "list_claude_sessions":
+    case "select_claude_session": {
+      const port = getCdpPort();
+      if (!port) {
+        return textResult(
+          "CDP port not available. Ensure VS Code: is started with --remote-debugging-port=9222",
+          true
+        );
+      }
+
+      let windowTitle = typeof args.windowTitle === "string" ? args.windowTitle : undefined;
+      if (typeof args.connectionId === "string" && args.connectionId) {
+        const connection =
+          connectionManager.getConnection(args.connectionId) ||
+          connectionManager.getConnectionByName(args.connectionId);
+        if (!connection) {
+          return textResult(`Error: Connection "${args.connectionId}" not found`, true);
+        }
+        windowTitle = (connection.config as VSCodeWindowConfig).windowTitle;
+      }
+
+      if (toolName === "list_claude_sessions") {
+        const result = await listClaudeSessions(port, {
+          windowTitle,
+          query: typeof args.query === "string" ? args.query : undefined,
+        });
+        return result.success
+          ? textResult(JSON.stringify(result.sessions, null, 2))
+          : textResult(`Failed to list Claude sessions: ${result.error}`, true);
+      }
+
+      const session = typeof args.session === "string" ? args.session.trim() : "";
+      if (!session) {
+        return textResult("Error: session is required", true);
+      }
+      const result = await selectClaudeSession(port, { windowTitle, session });
+      return result.success
+        ? textResult(`Switched to Claude session "${result.session?.name}" (${result.session?.sessionId})`)
+        : textResult(`Failed to switch Claude session: ${result.error}`, true);
     }
 
     case "save_task_preset": {
@@ -1777,5 +1893,6 @@ export async function runMCPTool(
   return result.content[0]?.text || "No result";
 }
 
-console.log("Reprompty MCP server loaded");
-console.log("Available tools:", getTools().map((tool) => tool.name).join(", "));
+// stdio MCP: stdout is the JSON-RPC transport, so logs must go to stderr.
+console.error("Reprompty MCP server loaded");
+console.error("Available tools:", getTools().map((tool) => tool.name).join(", "));

@@ -152,6 +152,38 @@ function getCurrentDesktopId(): string | null {
   }
 }
 
+export function getCurrentDesktopUuid(): string | null {
+  try {
+    const output = qdbus([
+      "org.kde.KWin",
+      "/VirtualDesktopManager",
+      "org.freedesktop.DBus.Properties.Get",
+      "org.kde.KWin.VirtualDesktopManager",
+      "current",
+    ]);
+    return output.replace(/"/g, "").trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+export function setCurrentDesktopUuid(id: string): void {
+  execFileSync(
+    "dbus-send",
+    [
+      "--session",
+      "--print-reply",
+      "--dest=org.kde.KWin",
+      "/VirtualDesktopManager",
+      "org.freedesktop.DBus.Properties.Set",
+      "string:org.kde.KWin.VirtualDesktopManager",
+      "string:current",
+      `variant:string:${id}`,
+    ],
+    { env: getSessionBusEnv(), timeout: 5000, stdio: "ignore" }
+  );
+}
+
 function normalizeArray<T>(value: unknown): T[] {
   if (value === undefined || value === null || value === "") {
     return [];

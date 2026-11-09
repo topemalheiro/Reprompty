@@ -418,7 +418,8 @@ export function resolveBackgroundRoute(
  * Enumerates windows via Win32 API, extracts folder from title, probes for IPC pipes.
  * Uses a temp .ps1 file to avoid cmd.exe escaping issues with $ variables.
  */
-export async function detectWindows(): Promise<DetectedWindow[]> {
+// options.force mirrors the Linux signature; there is no result cache here to bypass.
+export async function detectWindows(_options: { force?: boolean } = {}): Promise<DetectedWindow[]> {
   try {
     const tempDir = getWritableTempDir();
     const ps1File = nodePath.join(tempDir, "reprompty-detect.ps1");

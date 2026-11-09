@@ -251,8 +251,10 @@ Default Linux slots:
 Send a prompt to a saved connection.
 
 ```typescript
-{ connectionId: string; prompt: string; waitForResponse?: boolean; timeout?: number }
+{ connectionId: string; prompt: string; session?: string; waitForResponse?: boolean; timeout?: number }
 ```
+
+`session` (Claude Code only): switch the window's Claude panel to that session from its Session history before sending. Give the session ID, or its name (or a unique part of it) as the history list shows it. Reprompty re-opens the history to confirm the switch and refuses to send if the panel did not switch, so a prompt never lands in the wrong session. Without `session`, the prompt goes to whatever session the panel is showing.
 
 **Background routes by agent:**
 - **Kilo Code:** → IPC socket (fastest, no window focus)
@@ -261,6 +263,23 @@ Send a prompt to a saved connection.
 - **Codex:** → CDP inject + Enter key simulation
 
 If background fails, falls back to foreground (clipboard + key simulation).
+
+#### `list_claude_sessions`
+List the sessions in a Claude Code window's Session history (Local tab).
+
+```typescript
+{ connectionId?: string; windowTitle?: string; query?: string }
+// Returns: Array<{ sessionId: string; name: string; time: string; active: boolean }>
+```
+
+`time` is relative, as the panel shows it (`"now"`, `"1m"`, `"19h"`, `"3d"`). `active` marks the session the panel is showing. `query` uses the history's own search box, which also finds sessions outside the initial list.
+
+#### `select_claude_session`
+Switch a Claude Code window's panel to a session without sending anything.
+
+```typescript
+{ session: string; connectionId?: string; windowTitle?: string }
+```
 
 #### `add_connection`
 Add a connection to the pool.
@@ -285,7 +304,7 @@ Remove a connection.
 Chain prompts across multiple connections.
 
 ```typescript
-{ prompts: Array<{ connectionId: string; prompt: string }>; continueOnError?: boolean }
+{ prompts: Array<{ connectionId: string; prompt: string; session?: string }>; continueOnError?: boolean }
 ```
 
 ---
@@ -348,6 +367,20 @@ await daisy_chain({
   continueOnError: true,
 });
 ```
+
+### Send into a chosen Claude Code session
+
+```typescript
+const sessions = JSON.parse(await list_claude_sessions({ connectionId: "spite-claude" }));
+// e.g. [{ sessionId: "74c9784f-...", name: "Spite + PlugData", time: "1m", active: false }, ...]
+await send_prompt({
+  connectionId: "spite-claude",
+  session: "Spite + PlugData", // or the sessionId
+  prompt: "Pick up where we left off on the PlugData bridge",
+});
+```
+
+If the name matches more than one session, the call fails and lists the candidates with their IDs; retry with the ID.
 
 ### Detect windows and send to a specific one
 
@@ -423,6 +456,7 @@ No params. Returns all connections with IDs and statuses.
 {
   "connectionId": "required string",
   "prompt": "required string",
+  "session": "optional string (Claude Code: session ID or name to switch to first)",
   "timeout": "optional number (ms)",
   "waitForResponse": "optional boolean"
 }
@@ -432,7 +466,7 @@ No params. Returns all connections with IDs and statuses.
 ```json
 {
   "prompts": [
-    { "connectionId": "...", "prompt": "..." }
+    { "connectionId": "...", "prompt": "...", "session": "optional" }
   ],
   "continueOnError": "optional boolean"
 }
@@ -443,6 +477,24 @@ No params. Returns all VS Code:/Kimi Code: windows with PIDs and capabilities.
 
 ### `check_cdp`
 No params. Returns whether Chrome DevTools Protocol is available for background send.
+
+### `list_claude_sessions`
+```json
+{
+  "connectionId": "optional string",
+  "windowTitle": "optional string",
+  "query": "optional string"
+}
+```
+
+### `select_claude_session`
+```json
+{
+  "session": "required string (session ID or name)",
+  "connectionId": "optional string",
+  "windowTitle": "optional string"
+}
+```
 
 ### `spawn_window`
 ```json

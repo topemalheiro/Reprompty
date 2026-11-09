@@ -11,6 +11,7 @@ export interface CdpTarget {
   title: string;
   url: string;
   webSocketDebuggerUrl: string;
+  parentId?: string;
 }
 
 export interface CdpWindowTargetGroup {
@@ -32,7 +33,22 @@ interface ViewSwitcherProbe {
 interface SendViaAgentOptions {
   agent: Exclude<AgentKind, "unknown">;
   windowTitle?: string;
+  /** Claude Code only: session to switch to before sending (session ID or name). */
+  session?: string;
 }
+
+export interface ClaudeSessionInfo {
+  sessionId: string;
+  name: string;
+  /** Relative time as the panel shows it ("now", "1m", "19h", "3d"). */
+  time: string;
+  /** True for the session currently shown in the panel. */
+  active: boolean;
+}
+
+type ClaudeSessionScriptOptions =
+  | { mode: "list"; query?: string }
+  | { mode: "select"; session: string };
 
 function normalizeText(value?: string | null): string {
   return (value ?? "").trim().toLowerCase();
@@ -118,18 +134,33 @@ export function mapTargetUrlToAgent(url?: string | null): AgentKind {
 
 export function groupTargetsByPage(targets: CdpTarget[]): CdpWindowTargetGroup[] {
   const groups: CdpWindowTargetGroup[] = [];
-  let currentGroup: CdpWindowTargetGroup | null = null;
-
+  const byPageId = new Map<string, CdpWindowTargetGroup>();
   for (const target of targets) {
     if (target.type === "page") {
-      currentGroup = { page: target, iframes: [] };
-      groups.push(currentGroup);
+      const group = { page: target, iframes: [] };
+      groups.push(group);
+      byPageId.set(target.id, group);
+    }
+  }
+
+  // /json doesn't keep iframes after their page, so follow parentId up to the page.
+  const byId = new Map(targets.map((target) => [target.id, target]));
+  let currentGroup: CdpWindowTargetGroup | null = null;
+  for (const target of targets) {
+    if (target.type === "page") {
+      currentGroup = byPageId.get(target.id) ?? null;
       continue;
     }
+    if (target.type !== "iframe") continue;
 
-    if (target.type === "iframe" && currentGroup) {
-      currentGroup.iframes.push(target);
+    let parentId = target.parentId;
+    const seen = new Set<string>();
+    while (parentId && !byPageId.has(parentId) && !seen.has(parentId)) {
+      seen.add(parentId);
+      parentId = byId.get(parentId)?.parentId;
     }
+    const group = parentId ? byPageId.get(parentId) : currentGroup;
+    group?.iframes.push(target);
   }
 
   return groups;
@@ -210,16 +241,39 @@ async function getCdpTargets(port: number): Promise<CdpTarget[]> {
   });
 }
 
+/**
+ * Cheap fingerprint of the open editor windows and their agent webviews: one
+ * HTTP request to VS Code, no KWin traffic. Only the workspace part of each
+ * title is kept, so switching files inside a window doesn't count as a change.
+ */
+export async function getCdpWindowSignature(port: number): Promise<string> {
+  const targets = await getCdpTargets(port);
+  return targets
+    .filter(
+      (target) =>
+        target.type === "page" ||
+        (target.type === "iframe" && mapTargetUrlToAgent(target.url) !== "unknown")
+    )
+    .map((target) => {
+      if (target.type !== "page") return target.id;
+      const workspace = stripEditorSuffix(target.title).split(" - ").pop() ?? "";
+      return `${target.id}:${workspace}`;
+    })
+    .sort()
+    .join("|");
+}
+
 function cdpEvaluate(
   ws: InstanceType<typeof WS>,
   expression: string,
-  id: number
+  id: number,
+  timeoutMs = 8000
 ): Promise<{ result?: { result?: { value?: unknown; type?: string } } }> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       ws.off("message", handler);
       reject(new Error("CDP evaluate timed out"));
-    }, 8000);
+    }, timeoutMs);
 
     const handler = (data: Buffer | string) => {
       try {
@@ -243,7 +297,7 @@ function cdpEvaluate(
       JSON.stringify({
         id,
         method: "Runtime.evaluate",
-        params: { expression, returnByValue: true },
+        params: { expression, returnByValue: true, awaitPromise: true },
       })
     );
   });
@@ -671,34 +725,291 @@ async function sendIntoAgentTarget(
   }
 }
 
+async function resolveAgentTarget(
+  port: number,
+  agent: Exclude<AgentKind, "unknown">,
+  windowTitle?: string
+): Promise<{ target: CdpTarget } | { error: string }> {
+  const targets = await getCdpTargets(port);
+  const groups = groupTargetsByPage(targets);
+  const windowGroup = findWindowGroupByTitle(groups, windowTitle);
+
+  if (!windowGroup) {
+    return {
+      error: windowTitle
+        ? `No unique VS Code CDP target matched "${windowTitle}"`
+        : "No unique VS Code CDP target matched the requested agent",
+    };
+  }
+
+  const iframeTarget = findAgentIframeTarget(windowGroup, agent);
+  if (!iframeTarget) {
+    return { error: `${agent} webview not found in ${windowGroup.page.title}` };
+  }
+
+  return { target: iframeTarget };
+}
+
+/**
+ * Drives the Claude Code panel's "Session history" dropdown. Rows are
+ * button#sessions-list-row-<sessionId>; class names carry a per-build hash
+ * suffix (sessionItem_OOQiHg), so they are matched by prefix only.
+ * "select" re-opens the dropdown after clicking to confirm the switch, so a
+ * prompt is never sent into the wrong session.
+ */
+function getClaudeSessionScript(options: ClaudeSessionScriptOptions): string {
+  return `
+  (async () => {
+    var opts = ${JSON.stringify(options)};
+    var iframe = document.querySelector('iframe');
+    var doc = iframe && iframe.contentDocument;
+    if (!doc) return { error: 'no_contentDocument' };
+    var win = doc.defaultView;
+    function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+    async function waitFor(fn, ms) {
+      var end = Date.now() + ms;
+      while (Date.now() < end) { var v = fn(); if (v) return v; await sleep(50); }
+      return fn();
+    }
+    function listOpen() { return doc.querySelector('[role="dialog"] #sessions-list'); }
+    function rows() { return Array.from(doc.querySelectorAll('button[id^="sessions-list-row-"]')); }
+    function readRow(b) {
+      var name = b.querySelector('[class*="sessionName_"]');
+      var time = b.querySelector('[class*="sessionTime_"]');
+      return {
+        sessionId: b.id.slice('sessions-list-row-'.length),
+        name: (name ? name.textContent : '').trim(),
+        time: (time ? time.textContent : '').trim(),
+        active: /(^|\\s)active_/.test(b.className),
+      };
+    }
+    function rowIds() { return rows().map(function (b) { return b.id; }).join(','); }
+    function searchInput() { return doc.querySelector('input[placeholder^="Search sessions"]'); }
+    async function setSearch(value) {
+      var input = searchInput();
+      if (!input) {
+        var toggle = doc.querySelector('[aria-label="Search sessions"]');
+        if (toggle) { toggle.click(); input = await waitFor(searchInput, 1000); }
+      }
+      if (!input) return false;
+      if (input.value === value) return true;
+      var before = rowIds();
+      // React controlled input: set through the native setter so onChange fires.
+      Object.getOwnPropertyDescriptor(win.HTMLInputElement.prototype, 'value').set.call(input, value);
+      input.dispatchEvent(new win.Event('input', { bubbles: true }));
+      await waitFor(function () { return rowIds() !== before; }, 800);
+      return true;
+    }
+
+    var historyButton = doc.querySelector('[aria-label="Session history"]');
+    if (!historyButton) return { error: 'session_history_button_not_found' };
+    async function open() {
+      if (!listOpen()) historyButton.click();
+      if (!(await waitFor(listOpen, 2000))) return false;
+      var localTab = Array.from(doc.querySelectorAll('[role="dialog"] button[aria-pressed]')).find(function (b) {
+        return b.textContent.trim() === 'Local';
+      });
+      if (localTab && localTab.getAttribute('aria-pressed') !== 'true') {
+        localTab.click();
+        await sleep(200);
+      }
+      await waitFor(function () { return rows().length > 0; }, 1500);
+      return true;
+    }
+    async function close() {
+      if (listOpen()) historyButton.click();
+      await waitFor(function () { return !listOpen(); }, 1000);
+    }
+
+    var wasOpen = Boolean(listOpen());
+    if (!(await open())) return { error: 'session_list_did_not_open' };
+
+    if (opts.mode === 'list') {
+      var searched = opts.query ? await setSearch(opts.query) : false;
+      var listed = rows().map(readRow);
+      if (searched) await setSearch('');
+      if (!wasOpen) await close();
+      return { sessions: listed };
+    }
+
+    var wanted = String(opts.session || '').trim();
+    var lower = wanted.toLowerCase();
+    function pick() {
+      var all = rows();
+      var byId = all.filter(function (b) { return b.id === 'sessions-list-row-' + wanted; });
+      if (byId.length === 1) return { row: byId[0] };
+      var exact = all.filter(function (b) { return readRow(b).name.toLowerCase() === lower; });
+      if (exact.length === 1) return { row: exact[0] };
+      if (exact.length > 1) return { ambiguous: exact.map(readRow) };
+      var partial = all.filter(function (b) { return readRow(b).name.toLowerCase().indexOf(lower) !== -1; });
+      if (partial.length === 1) return { row: partial[0] };
+      if (partial.length > 1) return { ambiguous: partial.map(readRow) };
+      return null;
+    }
+
+    var initial = rows().map(readRow);
+    var found = pick();
+    if (!found) {
+      // Sessions outside the initial list can still be found by the dropdown's own search.
+      await setSearch(wanted);
+      await sleep(150);
+      found = pick();
+    }
+    if (!found || !found.row) {
+      await setSearch('');
+      await close();
+      return found && found.ambiguous
+        ? { error: 'ambiguous_session', candidates: found.ambiguous }
+        : { error: 'session_not_found', visible: initial };
+    }
+
+    var selected = readRow(found.row);
+    if (selected.active) {
+      await setSearch('');
+      await close();
+      return { selected: selected, verified: true };
+    }
+
+    found.row.click();
+    await waitFor(function () { return !listOpen(); }, 1500);
+    await close();
+    await sleep(300);
+
+    if (!(await open())) return { selected: selected, verified: false };
+    var nowActive = await waitFor(function () {
+      var row = doc.getElementById('sessions-list-row-' + selected.sessionId);
+      return row && /(^|\\s)active_/.test(row.className) ? row : null;
+    }, 1500);
+    await setSearch('');
+    await close();
+    return { selected: selected, verified: Boolean(nowActive) };
+  })()
+  `;
+}
+
+function describeSessionError(value: Record<string, unknown>): string {
+  const error = String(value.error);
+  if (error === "ambiguous_session" && Array.isArray(value.candidates)) {
+    const names = (value.candidates as ClaudeSessionInfo[])
+      .map((session) => `"${session.name}" (${session.sessionId})`)
+      .join(", ");
+    return `More than one Claude session matches; use the session ID or a longer name: ${names}`;
+  }
+  if (error === "session_not_found" && Array.isArray(value.visible)) {
+    const names = (value.visible as ClaudeSessionInfo[])
+      .map((session) => `"${session.name}"`)
+      .join(", ");
+    return `No Claude session matched. Sessions in this window: ${names || "(none)"}`;
+  }
+  return `Claude session history returned: ${error}`;
+}
+
+async function runClaudeSessionScript(
+  target: CdpTarget,
+  options: ClaudeSessionScriptOptions
+): Promise<Record<string, unknown>> {
+  return withTargetSocket(target, async (ws) => {
+    const result = await cdpEvaluate(ws, getClaudeSessionScript(options), 1, 20000);
+    const value = getEvaluationValue(result);
+    if (!value || typeof value !== "object") {
+      return { error: `unexpected_result:${String(value)}` };
+    }
+    return value as Record<string, unknown>;
+  });
+}
+
+async function selectClaudeSessionInTarget(
+  target: CdpTarget,
+  session: string
+): Promise<{ success: boolean; session?: ClaudeSessionInfo; error?: string }> {
+  const value = await runClaudeSessionScript(target, { mode: "select", session });
+  if (value.error) {
+    return { success: false, error: describeSessionError(value) };
+  }
+  const selected = value.selected as ClaudeSessionInfo;
+  if (!value.verified) {
+    return {
+      success: false,
+      session: selected,
+      error: `Clicked Claude session "${selected.name}" but the panel did not switch to it`,
+    };
+  }
+  return { success: true, session: selected };
+}
+
+export async function listClaudeSessions(
+  port: number,
+  options: { windowTitle?: string; query?: string } = {}
+): Promise<{ success: boolean; sessions?: ClaudeSessionInfo[]; error?: string }> {
+  try {
+    const resolved = await resolveAgentTarget(port, "claude-code", options.windowTitle);
+    if ("error" in resolved) {
+      return { success: false, error: resolved.error };
+    }
+    const value = await runClaudeSessionScript(resolved.target, {
+      mode: "list",
+      query: options.query,
+    });
+    if (value.error) {
+      return { success: false, error: describeSessionError(value) };
+    }
+    return { success: true, sessions: value.sessions as ClaudeSessionInfo[] };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+export async function selectClaudeSession(
+  port: number,
+  options: { windowTitle?: string; session: string }
+): Promise<{ success: boolean; session?: ClaudeSessionInfo; error?: string }> {
+  try {
+    const resolved = await resolveAgentTarget(port, "claude-code", options.windowTitle);
+    if ("error" in resolved) {
+      return { success: false, error: resolved.error };
+    }
+    return await selectClaudeSessionInTarget(resolved.target, options.session);
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
 export async function sendViaAgentCdp(
   port: number,
   message: string,
   options: SendViaAgentOptions
-): Promise<{ success: boolean; error?: string }> {
+): Promise<{ success: boolean; error?: string; session?: ClaudeSessionInfo }> {
   try {
-    const targets = await getCdpTargets(port);
-    const groups = groupTargetsByPage(targets);
-    const windowGroup = findWindowGroupByTitle(groups, options.windowTitle);
-
-    if (!windowGroup) {
+    if (options.session && options.agent !== "claude-code") {
       return {
         success: false,
-        error: options.windowTitle
-          ? `No unique VS Code CDP target matched "${options.windowTitle}"`
-          : "No unique VS Code CDP target matched the requested agent",
+        error: `Choosing a session is only supported for Claude Code (target agent: ${options.agent})`,
       };
     }
 
-    const iframeTarget = findAgentIframeTarget(windowGroup, options.agent);
-    if (!iframeTarget) {
-      return {
-        success: false,
-        error: `${options.agent} webview not found in ${windowGroup.page.title}`,
-      };
+    const resolved = await resolveAgentTarget(port, options.agent, options.windowTitle);
+    if ("error" in resolved) {
+      return { success: false, error: resolved.error };
     }
 
-    return sendIntoAgentTarget(iframeTarget, options.agent, message);
+    if (options.session) {
+      const selection = await selectClaudeSessionInTarget(resolved.target, options.session);
+      if (!selection.success) {
+        return { success: false, error: selection.error };
+      }
+      // Give the panel a moment to swap the conversation and its input in.
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      const sent = await sendIntoAgentTarget(resolved.target, options.agent, message);
+      return { ...sent, session: selection.session };
+    }
+
+    return sendIntoAgentTarget(resolved.target, options.agent, message);
   } catch (err) {
     return {
       success: false,
