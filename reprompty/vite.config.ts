@@ -4,6 +4,9 @@ import electron from "vite-plugin-electron";
 import renderer from "vite-plugin-electron-renderer";
 import { resolve } from "node:path";
 
+// vite-plugin-electron starts Electron with this environment; with the variable set it would run as plain Node.
+delete process.env.ELECTRON_RUN_AS_NODE;
+
 export default defineConfig({
   plugins: [
     react(),
@@ -17,6 +20,7 @@ export default defineConfig({
         vite: {
           build: {
             outDir: resolve(__dirname, "dist/main"),
+            emptyOutDir: true,
             minify: false,
             rollupOptions: {
               external: [
@@ -37,6 +41,7 @@ export default defineConfig({
         vite: {
           build: {
             outDir: resolve(__dirname, "dist/preload"),
+            emptyOutDir: true,
             rollupOptions: {
               external: ["electron"],
             },
