@@ -1,6 +1,6 @@
-# VS Code: Secondary Side Bar Toggle
+# VS Code Secondary Side Bar Toggle (Linux)
 
-A Reprompty-registered Python script that toggles VS Code:'s secondary/auxiliary side bar via Chrome DevTools Protocol, disables the default `Ctrl+Alt+B` keybinding, and lets you bind any key (e.g. Pause/Break) to trigger the toggle.
+A Reprompty-registered Python script that toggles VS Code's secondary/auxiliary side bar via Chrome DevTools Protocol, disables the default `Ctrl+Alt+B` keybinding, and lets you bind any key (e.g. Pause/Break) to trigger the toggle.
 
 ## Files
 
@@ -21,7 +21,7 @@ A Reprompty-registered Python script that toggles VS Code:'s secondary/auxiliary
 
 ## Requirements
 
-- VS Code: running with CDP enabled on `localhost:9222` (Reprompty/Kilo Code: usually enables this)
+- VS Code with its debugging port on (Reprompty's Setup tab). The script uses port 9222 unless you pass `--cdp-port`.
 - Python 3.10+
 - `evdev` is only needed for the key listener; the script installs it into a local `.venv`
 
@@ -31,14 +31,14 @@ A Reprompty-registered Python script that toggles VS Code:'s secondary/auxiliary
 2. In the window that opens, click **Capture Key**, then press your special key (e.g. Pause/Break).
 3. Click **Apply**. This will:
    - save the key,
-   - disable `Ctrl+Alt+B` in VS Code:,
+   - disable `Ctrl+Alt+B` in VS Code,
    - start the listener.
 4. Press your key — the side bar toggles.
 
 ## Manual usage
 
 ```bash
-cd /home/tope/Projects/OS-Toolkit/Reprompty/scripts
+cd <path-to-Reprompty>/scripts
 
 # Toggle the side bar
 python3 vscode-toggle-secondary-sidebar.py toggle
@@ -64,7 +64,7 @@ python3 vscode-toggle-secondary-sidebar.py status
 
 ## How Ctrl+Alt+B is disabled
 
-The script edits `~/.config/Code:/User/keybindings.json` and adds a rule that unbinds `Ctrl+Alt+B` from `workbench.action.toggleAuxiliaryBar`. VS Code: usually reloads this file automatically; if not, run **Developer: Reload Window** from the command palette.
+The script edits `~/.config/Code/User/keybindings.json` and adds a rule that unbinds `Ctrl+Alt+B` from `workbench.action.toggleAuxiliaryBar`. VS Code usually reloads this file automatically; if not, run **Developer: Reload Window** from the command palette.
 
 ## Troubleshooting
 
@@ -74,5 +74,5 @@ The script edits `~/.config/Code:/User/keybindings.json` and adds a rule that un
   python3 -m venv .venv
   .venv/bin/pip install evdev
   ```
-- **Toggle does nothing**: Make sure VS Code: is focused and no modal/notification is blocking input.
+- **Toggle does nothing**: Make sure VS Code is focused and no modal/notification is blocking input.
 - **Listener permission error**: Add your user to the `input` group and re-login, or run with `sudo`.

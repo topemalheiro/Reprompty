@@ -1,1 +1,0 @@
-/home/tope/Projects/OS-Toolkit/Reprompty/skills-reprompty/SKILL.md
