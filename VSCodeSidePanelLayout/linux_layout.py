@@ -228,12 +228,25 @@ def get_monitor_geometry(log_file: Optional[str] = None) -> list:
                 continue
             pos = out.get("pos", {})
             size = out.get("size", {})
+            # kscreen-doctor reports `pos` in LOGICAL coordinates but `size` in
+            # PHYSICAL (mode) pixels. Mixing the two silently breaks every
+            # geometry calculation the moment any output is not at 100% scale:
+            # a 1920px-wide panel at 1.2 scale occupies only 1600 logical px, so
+            # the next monitor's `pos.x` is 1600 further along, not 1920.
+            # Normalise to logical here so the rest of the module has one unit.
+            try:
+                scale = float(out.get("scale") or 1.0)
+            except (TypeError, ValueError):
+                scale = 1.0
+            if scale <= 0:
+                scale = 1.0
             monitors.append({
                 "name": out.get("name", "unknown"),
                 "x": pos.get("x", 0),
                 "y": pos.get("y", 0),
-                "width": size.get("width", 1920),
-                "height": size.get("height", 1080),
+                "width": round(size.get("width", 1920) / scale),
+                "height": round(size.get("height", 1080) / scale),
+                "scale": scale,
             })
 
         # Sort left-to-right by x position
@@ -347,19 +360,12 @@ def get_active_window(log_file: Optional[str] = None) -> Optional[Tuple[str, str
     """Get the currently active/focused window ID and title."""
     # Try kdotool first (KDE Wayland native)
     if _has_kdotool():
-        try:
-            result = subprocess.run(
-                [KDOTOOL_PATH, "getactivewindow"],
-                capture_output=True, text=True, timeout=5
-            )
-            if result.returncode == 0:
-                wid = result.stdout.strip()
-                if wid and wid.startswith("{"):
-                    title = get_window_title(wid)
-                    if title:
-                        return (wid, title)
-        except Exception as e:
-            log(f"kdotool getactivewindow error: {e}", log_file)
+        wid = _kdotool_query(["getactivewindow"], log_file)
+        if wid and wid.startswith("{"):
+            title = get_window_title(wid)
+            if title:
+                return (wid, title)
+            log(f"Active window {wid} reported no title", log_file)
 
     # Fallback to xdotool (X11/XWayland)
     if _has_xdotool():
@@ -379,11 +385,44 @@ def get_active_window(log_file: Optional[str] = None) -> Optional[Tuple[str, str
                     )
                     if title_result.returncode == 0:
                         title = title_result.stdout.strip()
-                        return (wid, title)
+                        # Require a non-empty title, exactly as the kdotool branch
+                        # above already does. On Wayland this xdotool answers with a
+                        # bogus XWayland id (2097152) whose name is empty; accepting
+                        # it shadowed the real active window and sent
+                        # find_vscode_window() down its desktop-blind search path,
+                        # which is what made layouts land on the wrong virtual
+                        # desktop and drag the session along with them.
+                        if title:
+                            return (wid, title)
+                        log(
+                            f"xdotool getactivewindow returned {wid} with an empty "
+                            "title; ignoring it",
+                            log_file,
+                        )
         except Exception as e:
             log(f"xdotool getactivewindow error: {e}", log_file)
 
     return None
+
+
+def get_current_desktop(log_file: Optional[str] = None) -> Optional[int]:
+    """Number of the virtual desktop the user is currently on, or None."""
+    out = _kdotool_query(["get_desktop"], log_file)
+    try:
+        return int(out) if out is not None else None
+    except ValueError:
+        return None
+
+
+def get_desktop_for_window(wid: str, log_file: Optional[str] = None) -> Optional[int]:
+    """Number of the virtual desktop a window lives on, or None."""
+    if not wid.startswith("{"):
+        return None
+    out = _kdotool_query(["get_desktop_for_window", wid], log_file)
+    try:
+        return int(out) if out is not None else None
+    except ValueError:
+        return None
 
 
 def find_vscode_window(title: Optional[str] = None, handle: Optional[str] = None, log_file: Optional[str] = None) -> Optional[str]:
@@ -397,6 +436,8 @@ def find_vscode_window(title: Optional[str] = None, handle: Optional[str] = None
     # If no specific title/handle requested, try active window first
     if not title and not handle:
         active = get_active_window(log_file)
+        if not active:
+            log("Could not determine the active window, falling back to search", log_file)
         if active:
             wid, active_title = active
             if any(term in active_title for term in search_terms):
@@ -407,11 +448,20 @@ def find_vscode_window(title: Optional[str] = None, handle: Optional[str] = None
 
     # Try kdotool first (KDE Wayland native)
     if _has_kdotool():
+        # Scope the search to the desktop the user is actually looking at. Doing
+        # this in the query rather than filtering afterwards is what makes the
+        # result correct on EVERY exit below: the single-match shortcut and the
+        # first-match fallback can then only ever yield a current-desktop window.
+        # Filtering later left both of those paths free to return a window from
+        # another desktop, and windowactivate would then drag the session there.
+        current_desktop = get_current_desktop()
+        scope = ["--desktop", str(current_desktop)] if current_desktop is not None else []
+
         all_matches = []
         for search_term in search_terms:
             try:
                 result = subprocess.run(
-                    [KDOTOOL_PATH, "search", "--title", search_term],
+                    [KDOTOOL_PATH, "search"] + scope + ["--title", search_term],
                     capture_output=True, text=True, timeout=5
                 )
                 if result.returncode == 0:
@@ -425,40 +475,28 @@ def find_vscode_window(title: Optional[str] = None, handle: Optional[str] = None
                 log(f"kdotool search error: {e}")
 
         if all_matches:
-            if len(all_matches) == 1:
-                return all_matches[0][0]
-
-            # Multiple matches: prefer the one on the current desktop
-            try:
-                desktop_result = subprocess.run(
-                    [KDOTOOL_PATH, "get_desktop"],
-                    capture_output=True, text=True, timeout=5
-                )
-                current_desktop = int(desktop_result.stdout.strip()) if desktop_result.returncode == 0 else None
-            except Exception:
-                current_desktop = None
-
-            if current_desktop is not None:
-                desktop_matches = []
-                for wid, wtitle in all_matches:
-                    try:
-                        dresult = subprocess.run(
-                            [KDOTOOL_PATH, "get_desktop_for_window", wid],
-                            capture_output=True, text=True, timeout=2
-                        )
-                        if dresult.returncode == 0:
-                            wd = int(dresult.stdout.strip())
-                            if wd == current_desktop:
-                                desktop_matches.append((wid, wtitle))
-                    except Exception:
-                        pass
-                if desktop_matches:
-                    log(f"Using VS Code: window on current desktop: {desktop_matches[0][0]} ('{desktop_matches[0][1]}')", log_file)
-                    return desktop_matches[0][0]
-
-            # Fallback to first match
-            log(f"Multiple VS Code: windows found, using first: {all_matches[0][0]} ('{all_matches[0][1]}')", log_file)
+            # The search was already scoped to the current desktop, so every match
+            # is a valid target and no post-filtering is needed. (This replaces a
+            # filter that ran get_desktop_for_window per candidate and was bypassed
+            # entirely whenever exactly one window matched.)
+            log(
+                f"Using VS Code: window on desktop {current_desktop}: "
+                f"{all_matches[0][0]} ('{all_matches[0][1]}')",
+                log_file,
+            )
             return all_matches[0][0]
+
+        if scope:
+            # kdotool worked and simply found nothing here. Do NOT fall through to
+            # the xdotool branch below: it searches every desktop and returns an
+            # integer X11 id, which move_window's `wid.startswith("{")` test then
+            # routes down the xdotool path, silently no-opping on a Wayland window.
+            # Better to do nothing and say so than to act on the wrong desktop.
+            log(
+                f"No VS Code: window on desktop {current_desktop}; doing nothing",
+                log_file,
+            )
+            return None
 
     # Fallback to xdotool (X11/XWayland)
     if _has_xdotool():
@@ -495,19 +533,54 @@ def find_vscode_window(title: Optional[str] = None, handle: Optional[str] = None
 # Window manipulation
 # =============================================================================
 
+def _kdotool_query(args: list, log_file: Optional[str] = None,
+                   attempts: int = 4, delay: float = 0.06) -> Optional[str]:
+    """Run a read-only kdotool query, retrying while it answers with nothing.
+
+    kdotool drives KWin by loading a throwaway KWin script per invocation and
+    reading its reply back over D-Bus. That handshake races: measured on this
+    machine, `kdotool get_desktop` returns an EMPTY string roughly 40% of the
+    time, with exit status 0. Every symptom traced back to this -- an empty
+    get_desktop dropped the --desktop scope and let the search pick a window on
+    another virtual desktop, and an empty getwindowname made get_active_window
+    fall through to xdotool's bogus XWayland id. Retrying turns a coin-flip into
+    a reliable answer; four attempts makes an all-empty run about 0.4^4 ~= 2.5%,
+    and each retry costs ~60ms only on the failing path.
+
+    Returns the stripped stdout, or None if every attempt came back empty.
+    """
+    if not _has_kdotool():
+        return None
+    for attempt in range(attempts):
+        try:
+            result = subprocess.run(
+                [KDOTOOL_PATH] + args,
+                capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0:
+                out = result.stdout.strip()
+                if out:
+                    return out
+        except Exception as e:
+            log(f"kdotool {' '.join(args)} error: {e}", log_file)
+            return None
+        if attempt < attempts - 1:
+            time.sleep(delay)
+    log(f"kdotool {' '.join(args)} returned empty {attempts}x", log_file)
+    return None
+
+
 def get_window_title(wid: str) -> Optional[str]:
     """Get the title of a window using kdotool or xdotool."""
     is_kdotool = wid.startswith("{")
     if is_kdotool and _has_kdotool():
-        try:
-            result = subprocess.run(
-                [KDOTOOL_PATH, "getwindowname", wid],
-                capture_output=True, text=True, timeout=5
-            )
-            if result.returncode == 0:
-                return result.stdout.strip()
-        except Exception:
-            pass
+        title = _kdotool_query(["getwindowname", wid])
+        if title:
+            return title
+        # Deliberately do NOT fall through to xdotool for a kdotool window id:
+        # xdotool cannot address Wayland windows and answers about an unrelated
+        # XWayland one.
+        return None
     # Fallback to xdotool
     env = os.environ.copy()
     env["LD_LIBRARY_PATH"] = os.path.expanduser("~/.local/lib") + ":" + env.get("LD_LIBRARY_PATH", "")
@@ -529,19 +602,46 @@ def move_window(wid: str, x: int, y: int, width: int, height: int, log_file: Opt
 
     if is_kdotool and _has_kdotool():
         try:
+            # Unmaximize/unfullscreen first, otherwise KWin ignores geometry changes.
+            subprocess.run(
+                [
+                    KDOTOOL_PATH,
+                    "windowstate", "--remove", "MAXIMIZED", "--remove", "FULLSCREEN", wid,
+                ],
+                capture_output=True, timeout=5,
+            )
+            time.sleep(0.05)
             # KDE 6: windowsize requires the window to be active first, but
             # windowmove must happen BEFORE activation to avoid desktop-switch drift.
             # Chain move + activate + resize in a single kdotool invocation
             # so KWin applies them atomically — no visible "middle point"
-            subprocess.run(
-                [
-                    KDOTOOL_PATH,
-                    "windowmove", wid, str(x), str(y),
-                    "windowactivate", wid,
-                    "windowsize", wid, str(width), str(height),
-                ],
-                capture_output=True, timeout=5,
+            # kdotool's windowactivate SWITCHES virtual desktop when the target
+            # lives on another one -- "If the window is on another desktop, we
+            # will switch to that desktop" (kdotool --help). A layout request must
+            # never move the user, so drop the activate in that case. Reordering
+            # move-before-activate (below) only ever fixed geometry drift; it does
+            # not stop the switch.
+            window_desktop = get_desktop_for_window(wid, log_file)
+            current_desktop = get_current_desktop(log_file)
+            cross_desktop = (
+                window_desktop is not None
+                and current_desktop is not None
+                and window_desktop != current_desktop
             )
+
+            cmd = [KDOTOOL_PATH, "windowmove", wid, str(x), str(y)]
+            if cross_desktop:
+                log(
+                    f"Window {wid} is on desktop {window_desktop} but the current "
+                    f"desktop is {current_desktop}; skipping activate so the "
+                    "session stays put",
+                    log_file,
+                )
+            else:
+                cmd += ["windowactivate", wid]
+            cmd += ["windowsize", wid, str(width), str(height)]
+
+            subprocess.run(cmd, capture_output=True, timeout=5)
             log(f"Moved window {wid} to {x},{y} size {width}x{height}", log_file)
             return True
         except Exception as e:
@@ -668,6 +768,10 @@ def set_auxiliary_bar_width(width: int, log_file: Optional[str] = None) -> bool:
 # Global persistent CDP WebSocket cache for daemon mode
 _cdp_websockets: Dict[str, MinimalWebSocket] = {}
 
+# What the last successful apply established, so the zoom watcher can restore it.
+# Guarded by _layout_lock. Keys: title, panel_side, fraction, dpr.
+_last_sash_state: Optional[dict] = None
+
 def _get_cached_ws(ws_url: str) -> Optional[MinimalWebSocket]:
     ws = _cdp_websockets.get(ws_url)
     if ws and ws.sock:
@@ -728,7 +832,31 @@ def get_cdp_targets(port: int, log_file: Optional[str] = None) -> list:
             return targets
     except Exception as e:
         log(f"CDP: Failed to fetch targets on port {port}: {e}", log_file)
+        if isinstance(getattr(e, "reason", e), ConnectionRefusedError):
+            warn_no_cdp(port)
         return []
+
+
+def warn_no_cdp(port: int):
+    """Notify (at most every 30 min) when VS Code runs without its debug port.
+
+    Happens when VS Code relaunches itself while the old instance still holds
+    the port: the new one starts without CDP, so sash and zoom silently fail.
+    """
+    if subprocess.run(["pgrep", "-x", "code"], capture_output=True).returncode != 0:
+        return
+    stamp = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "reprompty-no-cdp-warned")
+    try:
+        if time.time() - os.path.getmtime(stamp) < 1800:
+            return
+    except OSError:
+        pass
+    open(stamp, "w").close()
+    subprocess.run(["notify-send", "-a", "Reprompty", "-i", "dialog-warning",
+                    "VS Code has no debug port",
+                    f"Nothing on port {port}, so sash snapping and zoom can't work. "
+                    "Fully quit VS Code (File > Exit) and reopen it."],
+                   capture_output=True)
 
 
 def find_matching_target(targets: list, window_title: Optional[str] = None) -> Optional[dict]:
@@ -781,9 +909,15 @@ def get_auxiliary_bar_sash_position(ws: MinimalWebSocket) -> Optional[dict]:
     if (!auxBar) return JSON.stringify({ error: 'no-auxiliary-bar', debug: ['auxBar element not found'] });
 
     const auxRect = auxBar.getBoundingClientRect();
-    const isLeft = auxRect.left < window.innerWidth / 2;
+    // Which edge of the window is the bar docked against? Compare the gap on
+    // each side rather than testing the bar's left edge against the midpoint:
+    // a wide right-hand panel starts at or before the centre, so the midpoint
+    // test flips to LEFT exactly when the panel is half the window or wider.
+    const gapLeft = auxRect.left;
+    const gapRight = window.innerWidth - auxRect.right;
+    const isLeft = gapLeft <= gapRight;
     debug.push('auxBar: left=' + Math.round(auxRect.left) + ' top=' + Math.round(auxRect.top) + ' w=' + Math.round(auxRect.width) + ' h=' + Math.round(auxRect.height));
-    debug.push('auxBar side=' + (isLeft ? 'LEFT' : 'RIGHT'));
+    debug.push('auxBar side=' + (isLeft ? 'LEFT' : 'RIGHT') + ' gapL=' + Math.round(gapLeft) + ' gapR=' + Math.round(gapRight));
 
     if (auxRect.width === 0) return JSON.stringify({ error: 'auxiliary-bar-hidden', auxBarWidth: 0, debug: debug });
 
@@ -818,6 +952,7 @@ def get_auxiliary_bar_sash_position(ws: MinimalWebSocket) -> Optional[dict]:
         auxBarLeft: Math.round(auxRect.left),
         auxBarWidth: Math.round(auxRect.width),
         windowWidth: window.innerWidth,
+        devicePixelRatio: window.devicePixelRatio,
         isLeft: isLeft,
         debug: debug
     });
@@ -832,6 +967,41 @@ def get_auxiliary_bar_sash_position(ws: MinimalWebSocket) -> Optional[dict]:
         return json.loads(value)
     except Exception:
         return None
+
+
+def wait_for_viewport_settle(
+    ws: MinimalWebSocket,
+    log_file: Optional[str] = None,
+    timeout: float = 1.5,
+    interval: float = 0.05,
+) -> Optional[int]:
+    """Block until window.innerWidth stops changing, then return it.
+
+    move_window() returns as soon as KWin has accepted the geometry, but the
+    renderer reflows asynchronously, so window.innerWidth can still report the
+    PREVIOUS window's width for a beat afterwards. Positioning the sash against
+    that stale number puts it off by the ratio between the old and new widths --
+    e.g. moving 3280 -> 3200 at 1.2 zoom left the sash ~33px right of centre.
+
+    Two consecutive equal reads is enough; the reflow is a single synchronous
+    layout pass, not a gradual animation.
+    """
+    deadline = time.time() + timeout
+    previous = None
+    while time.time() < deadline:
+        resp = cdp_send(ws, "Runtime.evaluate",
+                        {"expression": "window.innerWidth", "returnByValue": True})
+        current = resp.get("result", {}).get("result", {}).get("value")
+        if not isinstance(current, (int, float)):
+            return None
+        current = int(current)
+        if previous is not None and current == previous:
+            return current
+        previous = current
+        time.sleep(interval)
+
+    log(f"CDP: viewport still changing after {timeout}s, using {previous}", log_file)
+    return previous
 
 
 def cdp_drag_sash(ws: MinimalWebSocket, from_x: int, from_y: int, to_x: int, to_y: int):
@@ -872,11 +1042,13 @@ def cdp_drag_sash(ws: MinimalWebSocket, from_x: int, from_y: int, to_x: int, to_
 
 
 def set_auxiliary_bar_width_cdp(
-    target_width: int,
+    target_width: int = 0,
     window_title: Optional[str] = None,
     expected_window_width: int = 0,
     panel_side: str = "right",
     log_file: Optional[str] = None,
+    panel_fraction: Optional[float] = None,
+    sash_fraction: Optional[float] = None,
 ) -> bool:
     """Resize auxiliary bar via CDP sash drag. Returns True on success."""
     log("Resizing auxiliary bar via CDP...", log_file)
@@ -906,6 +1078,10 @@ def set_auxiliary_bar_width_cdp(
             _cache_ws(ws_url, ws)
             log(f"CDP: Connected to {target.get('title', 'unknown')}", log_file)
 
+        # Let the renderer finish reflowing after the window move before reading
+        # any geometry off it -- see wait_for_viewport_settle().
+        wait_for_viewport_settle(ws, log_file)
+
         sash_info = get_auxiliary_bar_sash_position(ws)
         if not sash_info or sash_info.get("error"):
             err = sash_info.get("error") if sash_info else "no response"
@@ -914,17 +1090,66 @@ def set_auxiliary_bar_width_cdp(
 
         current_sash_x = sash_info["sashX"]
         sash_y = sash_info["sashY"]
-        effective_width = expected_window_width if expected_window_width > 0 else sash_info["windowWidth"]
-        is_left = sash_info.get("isLeft", False)
 
-        # Determine target sash position based on panel side
-        if is_left or panel_side == "left":
-            target_sash_x = target_width
+        # Where the bar actually is beats where the config thinks it should be:
+        # the user can move it (workbench.action.moveSideBarLeft/Right) without
+        # the layout slots knowing. panel_side is only a fallback for when the
+        # DOM query could not tell us.
+        detected_left = sash_info.get("isLeft")
+        if detected_left is None:
+            is_left = (panel_side == "left")
         else:
-            target_sash_x = effective_width - target_width
+            is_left = bool(detected_left)
 
-        side_str = "LEFT" if (is_left or panel_side == "left") else "RIGHT"
-        log(f"CDP: Sash at X={current_sash_x}, target X={target_sash_x} (panel={target_width}px on {side_str})", log_file)
+        # window.innerWidth: CSS pixels of the live renderer viewport. This is the
+        # only width that shares units with the CDP mouse coordinates dispatched
+        # below, and it already accounts for BOTH VS Code's zoom level and the
+        # output's scale factor.
+        viewport_width = sash_info["windowWidth"]
+
+        # Work in fractions, never absolute pixels. `target_width` and
+        # `expected_window_width` are KWin LOGICAL pixels; their ratio is
+        # unit-free and stays correct at any zoom and any scale. Feeding the
+        # logical width straight in as a CDP coordinate (what this did before)
+        # only happens to work at zoom level 0 on a 1.0-scale output -- at 1.2
+        # zoom the sash overshoots by exactly that factor, which is what made it
+        # drift off-centre on every zoom step.
+        # Pin the SASH's offset from the window's left edge, not the panel's share
+        # of the window. The two are only interchangeable on a symmetric span: if
+        # the window covers monitors of different widths (1360 + 1920 here), the
+        # panel is a different width depending on which side it is docked to,
+        # while the seam it should align with never moves. Storing the panel's
+        # share therefore throws the sash off the seam the moment the side bar is
+        # moved to the other side.
+        if sash_fraction is not None:
+            frac = float(sash_fraction)
+        else:
+            panel_frac = panel_fraction
+            if panel_frac is None:
+                ref_width = expected_window_width if expected_window_width > 0 else viewport_width
+                panel_frac = (target_width / ref_width) if ref_width > 0 else 0.5
+            panel_frac = min(max(float(panel_frac), 0.0), 1.0)
+            frac = panel_frac if is_left else (1.0 - panel_frac)
+
+        frac = min(max(frac, 0.0), 1.0)
+        target_sash_x = round(viewport_width * frac)
+
+        side_str = "LEFT" if is_left else "RIGHT"
+        log(
+            f"CDP: Sash at X={current_sash_x}, target X={target_sash_x} "
+            f"(sash={frac:.4f} of viewport {viewport_width}px, panel on {side_str})",
+            log_file,
+        )
+
+        # Remember what this apply asked for, so the watcher can restore it after
+        # the viewport changes size (zoom) or the panel is moved to the other side.
+        global _last_sash_state
+        _last_sash_state = {
+            "title": window_title,
+            "sash_fraction": frac,
+            "dpr": sash_info.get("devicePixelRatio"),
+            "is_left": is_left,
+        }
 
         if abs(current_sash_x - target_sash_x) <= 5:
             log("CDP: Already at target position", log_file)
@@ -975,6 +1200,16 @@ def load_slot_from_config(slot_letter: str, log_file: Optional[str] = None) -> O
                     "width": slot.get("windowWidth", 1920),
                     "height": slot.get("windowHeight", 1080),
                     "panel_width": slot.get("panelWidth", 960),
+                    # Optional. When present it wins over panelWidth, because a
+                    # fraction survives monitor rescales and zoom changes that
+                    # an absolute pixel count does not.
+                    "panel_fraction": slot.get("panelFraction"),
+                    # Preferred over both: the sash's offset from the window's
+                    # left edge. Unlike a panel share it does not change when the
+                    # side bar is moved to the opposite side, so it keeps the
+                    # sash on a monitor seam even when the monitors differ in
+                    # width. See set_auxiliary_bar_width_cdp().
+                    "sash_fraction": slot.get("sashFraction"),
                 }
         return None
     except Exception as e:
@@ -1040,8 +1275,18 @@ def run_layout(args: argparse.Namespace) -> dict:
         layout["height"] = args.height
     if args.panel_width is not None:
         layout["panel_width"] = args.panel_width
+        # An explicit width on the command line is a deliberate override, so drop
+        # any stored fraction -- otherwise the fraction would win and silently
+        # ignore the flag, which makes --panel-width useless for testing.
+        layout["panel_fraction"] = None
+        layout["sash_fraction"] = None
 
-    log(f"Layout: x={layout['x']} y={layout['y']} w={layout['width']} h={layout['height']} panel={layout['panel_width']} side={panel_side}", log_file)
+    log(
+        f"Layout: x={layout['x']} y={layout['y']} w={layout['width']} h={layout['height']} "
+        f"panel={layout['panel_width']} sash_fraction={layout.get('sash_fraction')} "
+        f"panel_fraction={layout.get('panel_fraction')} side={panel_side}",
+        log_file,
+    )
 
     handle = args.window_handle if args.window_handle else None
     wid = find_vscode_window(title=args.window_title, handle=handle, log_file=log_file)
@@ -1065,6 +1310,8 @@ def run_layout(args: argparse.Namespace) -> dict:
         expected_window_width=layout["width"],
         panel_side=panel_side,
         log_file=log_file,
+        panel_fraction=layout.get("panel_fraction"),
+        sash_fraction=layout.get("sash_fraction"),
     )
 
     if cdp_success:
@@ -1085,6 +1332,102 @@ def run_layout(args: argparse.Namespace) -> dict:
     }
 
 
+def zoom_watcher_loop(interval: float = 0.5):
+    """Keep the sash on its mark when the window changes out from under it.
+
+    Two things move the sash without anyone asking:
+
+    * Zoom. VS Code stores the auxiliary bar as an ABSOLUTE pixel width, so
+      zooming changes the viewport's CSS width while the bar keeps its size --
+      the sash's fraction of the window shifts on every zoom step.
+    * Moving the side bar to the other side (Ctrl+Alt+~ /
+      workbench.action.moveSideBarLeft/Right). VS Code preserves the bar's
+      WIDTH across the move, so on a window spanning unequal monitors the sash
+      lands nowhere near the seam it came from.
+
+    Watching devicePixelRatio and the docked side (rather than a resize event)
+    means this fires for every zoom path -- keyboard, Ctrl+scroll, the menu --
+    and never when the user deliberately drags the sash themselves, since a
+    manual drag changes neither signal.
+    """
+    global _last_sash_state
+
+    while True:
+        time.sleep(interval)
+        state = _last_sash_state
+        if not state:
+            continue
+
+        ws_url = None
+        try:
+            port = get_cdp_port()
+            targets = get_cdp_targets(port)
+            target = find_matching_target(targets, state.get("title"))
+            if not target:
+                continue
+            ws_url = target.get("webSocketDebuggerUrl")
+            if not ws_url:
+                continue
+
+            ws = _get_cached_ws(ws_url)
+            if not ws:
+                ws = MinimalWebSocket(ws_url)
+                _cache_ws(ws_url, ws)
+
+            probe = cdp_send(ws, "Runtime.evaluate", {
+                "expression": """(() => {
+                    const b = document.getElementById('workbench.parts.auxiliarybar');
+                    if (!b) return null;
+                    const r = b.getBoundingClientRect();
+                    if (r.width === 0) return null;
+                    return JSON.stringify({
+                        dpr: window.devicePixelRatio,
+                        isLeft: r.left <= (window.innerWidth - r.right)
+                    });
+                })()""",
+                "returnByValue": True,
+            })
+            raw = probe.get("result", {}).get("result", {}).get("value")
+            if not raw:
+                continue
+            now = json.loads(raw)
+
+            dpr_before, side_before = state.get("dpr"), state.get("is_left")
+            zoom_changed = (
+                isinstance(now.get("dpr"), (int, float))
+                and isinstance(dpr_before, (int, float))
+                and abs(now["dpr"] - dpr_before) > 1e-6
+            )
+            side_changed = (
+                isinstance(side_before, bool)
+                and bool(now.get("isLeft")) != side_before
+            )
+            if not (zoom_changed or side_changed):
+                continue
+
+            reason = "zoom" if zoom_changed else "side bar moved"
+            log(f"{reason} detected, restoring sash to {state['sash_fraction']:.4f}")
+
+            # Serialise against a layout request landing at the same moment.
+            with _layout_lock:
+                set_auxiliary_bar_width_cdp(
+                    window_title=state.get("title"),
+                    sash_fraction=state["sash_fraction"],
+                )
+
+            # The apply above rewrote _last_sash_state; carry the fraction we
+            # intended forward so repeated zooming keeps converging on the
+            # slot's value rather than drifting a little further each time.
+            if _last_sash_state:
+                _last_sash_state["sash_fraction"] = state["sash_fraction"]
+
+        except Exception as e:
+            log(f"Zoom watcher error: {e}")
+            # A dead socket is the usual cause; drop it so the next pass redials.
+            if ws_url and ws_url in _cdp_websockets:
+                del _cdp_websockets[ws_url]
+
+
 def daemon_main():
     """Run as a background daemon listening on a Unix domain socket."""
     ensure_linux_session_env()
@@ -1101,6 +1444,10 @@ def daemon_main():
     server.bind(socket_path)
     server.listen(5)
     log(f"Daemon listening on {socket_path}")
+
+    watcher = threading.Thread(target=zoom_watcher_loop, name="zoom-watcher", daemon=True)
+    watcher.start()
+    log("Zoom watcher started")
 
     try:
         while True:

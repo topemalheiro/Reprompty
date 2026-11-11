@@ -1,6 +1,6 @@
 # Reprompty
 
-Reprompty is an MCP Swiss Army knife for AI agent windows, tooling, desktop layouts, and cross-editor orchestration on Windows 11 and KDE/Linux (Wayland). It helps you manage both the visual and technical side of agent workflows, prompt engineering, and lower-friction MCP handoffs.
+Reprompty is an MCP Swiss Army knife for AI agent windows, tooling, desktop layouts, and cross-editor orchestration on Windows 11 and KDE/Linux (Wayland I don't think we need to say that). It helps you manage both the visual and technical side of agent workflows, prompt engineering, and lower-friction MCP handoffs.
 
 I made a demo video: https://www.youtube.com/watch?v=myEoB4hP7Oo
 
@@ -10,44 +10,44 @@ I made a demo video: https://www.youtube.com/watch?v=myEoB4hP7Oo
 
 Reprompty enables you to:
 
-- Shape the actual computer workflow, not just the prompt
-- Spawn multiple VS Code windows with isolated chat sessions
+- Shape the actual computer workflow, not just the prompt — Jargon
+- Spawn multiple VS Code windows with isolated chat sessions — isolated?
 - Organize windows, desktops, and layouts around the way you want to work
-- Create prompt templates with XML tags for structured prompting
-- Automate batch task execution across multiple windows
-- Trigger skills and workflows based on conditions
+- Create prompt templates with XML tags for structured prompting — NOT DONE, GOES TO ROADMAP
+- Automate batch task execution across multiple windows/virtual desktops/and activities on KDE Plasma.
+- Trigger skills and workflows based on conditions — NOT DONE, GOES TO ROADMAP
 - Build agent teams that collaborate on complex tasks
-- Work cleanly alongside projects like [Aperant-MCP](https://github.com/topemalheiro/Aperant-MCP) without adding handoff friction
-- Link LLMs to pass information or sync context to prepare for a merge, for example
+- Work cleanly alongside projects like [Aperant-MCP](https://github.com/topemalheiro/Aperant-MCP) without adding handoff friction — We're gonna take this off
+- Link LLMs to pass information or sync context to prepare for a merge, for example — kinda redundant to say unless we are gonna talk about memory and chat history the agents communicate between each other
 
 ## Features
 
 ### Window Management
 
-- Spawn duplicate VS Code windows pointing to the same directory
-- Each window maintains independent chat history
+- Spawn duplicate VS Code windows pointing to the same directory — REPETITIVE
+- Each window maintains independent chat history — REDUNDANT
 - Organize windows, desktops, and layouts automatically using scripts and MCP tools
 
 ### Prompt Engineering
 
-- XML-tagged prompt templates
+- XML-tagged prompt templates — TO BE DONE
 - Variable substitution and context injection
-- Prompt chaining and composition
+- Prompt chaining and composition — JARGON
 
 ### Automation
 
-- Trigger skills based on events
-- Batch task creation and management
-- Workflow orchestration for multi-agent teams
-- Lower-friction handoffs into Aperant-style MCP workflows
+- Trigger skills based on events — TO BE DONE AND VAGUE
+- Batch task creation and management — DIDN'T WE JUST SAY THIS
+- Workflow orchestration for multi-agent teams — JARGON
+- Lower-friction handoffs into Aperant-style MCP workflows — WE CAN TAKE THIS OFF
 
-### Agent Teams
+### Agent Teams — LITERALLY REPETITION
 
 - Coordinate multiple AI agents
 - Parallel task execution
 - Result aggregation and synthesis
 
-## Getting Started
+## Getting Started — ALL USERS NEED TO CLONE??? DOESN'T MAKE SENSE, INSTALL DOESN'T WORK TOO FOR PPL DOING IT MANUALLY
 
 ```bash
 # Clone the repository
@@ -61,7 +61,7 @@ npm install
 npm start
 ```
 
-## Kilo Code MCP Setup
+## Kilo Code MCP Setup — WE NEED A SECTION FOR SETTING UP THE SKILL AND MCPs OR HYPERLINK WOULD BE EVEN BEST. IT NEEDS TO BE CLEARER
 
 Reprompty's stdio MCP server entrypoint is `reprompty/src/mcp/server.ts`.
 
@@ -79,7 +79,7 @@ Direct entrypoint alternative:
 
 Do not point Kilo Code at `reprompty/src/mcp/index.ts`; that module contains tool implementations, while `reprompty/src/mcp/server.ts` is the stdio transport that handles MCP `initialize`, `tools/list`, and `tools/call`.
 
-## Spawn Targets (Token-Friendly VS Code Spawning)
+## Spawn Targets (Token-Friendly VS Code Spawning) — LOWKEY DUMB
 
 Reprompty can save common folders as **spawn targets** so MCP clients can open VS Code windows with a short alias instead of a long `folderPath`.
 
@@ -92,7 +92,7 @@ Reprompty can save common folders as **spawn targets** so MCP clients can open V
    - Optional default desktop name
 3. Click **Save Target**.
 
-From MCP:
+From MCP: — STRAIGHT GIBERISH
 
 ```text
 mcp__reprompty__list_spawn_targets
@@ -114,7 +114,7 @@ If `createDesktop: true` is supplied without an explicit `desktop`, Reprompty cr
 Desktop-aware spawns stay on your current desktop by default: Reprompty spawns VS Code, isolates the new window handle, and moves that exact window to the target desktop. If you explicitly want the old switch-first behavior, pass `"activateDesktop": true`.
 `spawn_and_layout` now waits for a uniquely identifiable VS Code window handle after spawn. If Reprompty cannot isolate one window safely, it returns an error instead of moving the wrong editor.
 
-## Virtual Desktop Management
+## Virtual Desktop Management — THIS SECTION AND THE ONE ABOVE NEED SIMPLIFYING
 
 Reprompty now treats virtual desktops as a built-in backend capability rather than a script convention.
 
@@ -133,9 +133,9 @@ Important behavior:
 - Spawn target defaults still work, but `createDesktop: true` overrides them for that one call so a fresh project desktop can be created on demand
 - Desktop-aware spawns no longer switch by default; repeated calls are the intended way to set up multiple desktops and windows while you stay on the current workspace
 
-## Script-Defined MCP Tools (Layout Presets)
+## Script-Defined MCP Tools (Layout Presets) — NEED TO BE CLEARER HERE AND STRAIGHT TO THE POINT
 
-Reprompty can turn **script flags / presets** into first-class MCP tools. This is the recommended way to expose layout presets like:
+Reprompty can turn **script flags / presets** into first-class(? WE DON'T NEED TO SAY THAT) MCP tools. This is the recommended way to expose layout presets like:
 
 - Ctrl+Alt+V: Dual monitor layout (bottom)
 - Ctrl+Alt+N: Top monitors layout (panel full)
@@ -172,37 +172,37 @@ In the **Scripts** tab, click **+ Add MCP tool** inside a script card and set:
 - Tool name (must be unique across all scripts and not collide with built-in tools)
 - Args (space-separated) to pass into the script (example: `-A` or `-Once`)
 
-### Important Notes
+### Important Notes — SHOULDN'T THIS IN A MARKDOWN THAT RELATES TO HOW THE MCP TOOLS WORK?
 
 - Generated script tools are **one-shot** invocations. The MCP call waits for the script to exit.
   - If your script is a long-running hotkey listener, add a one-shot switch like `-Once` that runs the layout and exits.
 - Output from MCP-triggered runs is appended to the script terminal with a `[MCP:<toolName>]` prefix.
 - Reprompty passes `-WindowHandle` and `-LogPath` automatically for built-in layout calls, so layout scripts can target an exact VS Code window and write a per-run transcript without changing user-facing flags.
 
-## Linux Global Shortcuts (KDE / Wayland)
+## Linux Global Shortcuts (KDE / Wayland)	— could be its own .md perhaps
 
 On Linux, Reprompty uses **KDE's global shortcut system** (`kglobalaccel`) so layouts work even when Reprompty itself is not running.
 
 ### How it connects
 
-1. **`~/.reprompty/layouts.json`** — stores slot coordinates (`windowX`, `windowY`, `windowWidth`, `windowHeight`, `panelWidth`) and `scriptArgs`  
-   - Slot A: `"scriptArgs": ["--once", "--slot", "A"]`  
+1. **`~/.reprompty/layouts.json`** — stores slot coordinates (`windowX`, `windowY`, `windowWidth`, `windowHeight`, `panelWidth`) and `scriptArgs`
+
+   - Slot A: `"scriptArgs": ["--once", "--slot", "A"]`
    - Slot B: `"scriptArgs": ["--once", "--slot", "B"]`
-
 2. **`~/.reprompty/scripts.json`** — set `"autoStart": false` so the layout script does **not** resize VS Code: on Reprompty launch.
+3. **Wrapper scripts** (`reprompty/linux/layout-dual.sh`, `layout-single.sh`)
 
-3. **Wrapper scripts** (`reprompty/linux/layout-dual.sh`, `layout-single.sh`)  
-   - Call `linux_layout.py --once --slot A` (or `B`)  
+   - Call `linux_layout.py --once --slot A` (or `B`)
    - The script reads the slot coordinates from `layouts.json` and applies them to the active VS Code: window via CDP.
+4. **KDE shortcut registration**
 
-4. **KDE shortcut registration**  
-   - `~/.local/share/applications/reprompty-layout-dual.desktop` → `Ctrl+Alt+V`  
-   - `~/.local/share/applications/reprompty-layout-single.desktop` → `Ctrl+Alt+N`  
-   - `~/.config/kglobalshortcutsrc` maps the keys to the `.desktop` files  
+   - `~/.local/share/applications/reprompty-layout-dual.desktop` → `Ctrl+Alt+V`
+   - `~/.local/share/applications/reprompty-layout-single.desktop` → `Ctrl+Alt+N`
+   - `~/.config/kglobalshortcutsrc` maps the keys to the `.desktop` files
    - `~/.config/khotkeysrc` stores the direct command fallback
+5. **Session restart required**
 
-5. **Session restart required**  
-   - KDE's `kglobalaccel` daemon caches `.desktop` file `Exec=` lines in memory.  
+   - KDE's `kglobalaccel` daemon caches `.desktop` file `Exec=` lines in memory.
    - After changing `.desktop` files or `kglobalshortcutsrc`, **log out and back in** for the changes to take effect.
 
 ### Troubleshooting
@@ -212,7 +212,7 @@ On Linux, Reprompty uses **KDE's global shortcut system** (`kglobalaccel`) so la
 - **"No VS Code: window found"** → Make sure a VS Code: window is open before pressing the shortcut.
 - **Reprompty resizes VS Code: on launch** → Verify `"autoStart": false` in `scripts.json`.
 
-## Layout Debug Logs
+## Layout Debug Logs — ONLY FOR WINDOWS MAYBE WE PUT IT IN ITS OWN MD
 
 Reprompty now writes two useful log streams for layout troubleshooting:
 
@@ -238,15 +238,7 @@ mcp__reprompty__apply_layout { "slot": "B", "windowHandle": 123456 }
 
 Reprompty is designed as a modular MCP toolkit that can:
 
-- Run as a VS Code extension
-- Integrate with existing tools like Kilo Code
-- Spawn and manage native Windows processes
-- Improve day-to-day UX at the computer-workflow level, not just inside one chat pane
-
-## License
-
-MIT License - see LICENSE file for details.
-
-## Contributing
-
-Contributions welcome!
+- Run as a VS Code extension — ??? THIS ISN'T RIGHT I THINK
+- 
+- Spawn and manage native Windows processes — I THINK WE ALREADY SAID THIS MANY TIMES AND FOR KDE WE GOTTTA TAKE THIS WHOLE SECTION I THINK.
+- Improve day-to-day UX at the computer-workflow level, not just inside one chat pane — THIS SHOULD BE WRITTEN UP THERE WE DON'T NEED TO REMIND THEM.
