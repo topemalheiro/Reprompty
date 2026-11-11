@@ -69,7 +69,8 @@ Switch between subscriptions, or between several accounts of the same agent (for
 
 - **Agent status dashboard:** a busy, waiting or idle badge and usage bars for every window in the Windows tab, which several features above build on. *How:* Claude Code's live session list and panel state, plus the window watch Reprompty already runs.
 - **Panel checks:** tests that notice when an agent extension changes its chat panel, so sending prompts doesn't break silently after an update.
-- **Windows parity:** opening a second window on the same project on Windows too. *How:* find a window's folder on Windows, which today only works on KDE Plasma.
+- **Windows parity:** built-in window layouts on Windows (move and resize through the Windows API, side panel width through VS Code's debugging port, slots worked out from your monitors), and opening a second window on the same project. *How:* the layout pieces exist in `src/core/layout-slots.ts`, `src/core/side-panel.ts` and `src/platform/windows-layout.ts` and need wiring in.
+- **Installers:** a Windows installer and a Linux AppImage on GitHub Releases, built by GitHub Actions, so you don't need Git or Node.js.
 - **More editors:** VSCodium, Cursor and the Flatpak build of VS Code.
 - **GNOME and macOS:** the window and desktop code is specific to Windows and KDE Plasma; the part that types prompts can be shared.
 - **Packages:** AUR and winget.
@@ -80,4 +81,4 @@ Switch between subscriptions, or between several accounts of the same agent (for
 
 ## Recently done
 
-- v0.3.0: *(filled in at release time)*
+- v0.3.0: installing works on a fresh machine (`npm install` gets a working Electron on npm 12 and Node 26, `npm start` builds first), `npm run setup` turns on VS Code's debugging port and connects Claude Code, Codex, Kilo Code and Kimi Code, and Code - OSS windows are found. Tested on a fresh Windows 11 and on KDE Plasma 6.

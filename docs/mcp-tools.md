@@ -1,6 +1,6 @@
 # MCP tools
 
-Reprompty's MCP server gives your AI agent the tools below. You don't call them yourself: ask your agent in plain words, for example "open shop-api on a desktop called Backend", and it picks the tools. To connect an agent, see [Agent setup](agent-setup.md).
+Reprompty's MCP server gives your AI agent the tools below. You don't call them yourself: ask your agent in plain words, for example "open shop-api on a desktop called Backend", and it picks the tools. To connect an agent, see [Agent setup](../README.md#connect-your-ai-agent).
 
 - [Find windows](#find-windows): [`detect_windows`](#detect_windows), [`detect_all_windows`](#detect_all_windows), [`check_cdp`](#check_cdp)
 - [Open windows](#open-windows): [`spawn_window`](#spawn_window), [`list_spawn_targets`](#list_spawn_targets), [`spawn_and_layout`](#spawn_and_layout), [`duplicate_workspace_in_new_window`](#duplicate_workspace_in_new_window)
@@ -21,7 +21,7 @@ Lists your open VS Code windows (on KDE Plasma also Code - OSS) with their title
 
 No arguments.
 
-Each window comes with a `handle` (on KDE Plasma often also a `kdotoolHandle`) to pass to [`apply_layout`](#apply_layout). `sendMethod: "background"` means Reprompty can type into the window. Agent panels only show up while VS Code's [debugging port](troubleshooting.md#vs-codes-debugging-port) is on.
+Each window comes with a `handle` (on KDE Plasma often also a `kdotoolHandle`) to pass to [`apply_layout`](#apply_layout). `sendMethod: "background"` means Reprompty can type into the window. Agent panels only show up while VS Code's [debugging port](../README.md#vs-codes-debugging-port) is on.
 
 Works on: Windows 11 and KDE Plasma 6.
 
@@ -39,7 +39,7 @@ Checks that VS Code's debugging port answers and that an agent panel can be reac
 
 No arguments.
 
-It returns `available`, the `port` and a `reason`. If the port is off, turn it on in Reprompty's **Setup** tab (in a source install, `npm run setup -- cdp` in the `reprompty` folder does the same), then quit VS Code completely and reopen it.
+It returns `available`, the `port` and a `reason`. If the port is off, turn it on with `npm run setup -- cdp` in the `reprompty` folder, then quit VS Code completely and reopen it.
 
 Works on: Windows 11 and KDE Plasma 6.
 
@@ -81,7 +81,7 @@ Does what [`spawn_window`](#spawn_window) does, then moves the new window into a
 
 It waits up to 15 seconds for the new window. If it can't tell the new window apart from others that opened at the same time, it stops with an error instead of moving the wrong window. The layout is applied before the window moves to its desktop.
 
-Works on: Windows 11 and KDE Plasma 6.
+Works on: KDE Plasma 6. On Windows the window opens but the layout step isn't built in yet.
 
 ### `duplicate_workspace_in_new_window`
 
@@ -99,7 +99,7 @@ Works on: KDE Plasma 6. Not on Windows yet.
 
 ## Virtual desktops
 
-These tools never switch your desktop. On Windows they need the VirtualDesktop PowerShell module, which Reprompty's **Setup** tab installs.
+These tools never switch your desktop. On Windows they need the VirtualDesktop PowerShell module, which `npm run setup` installs.
 
 ### `list_virtual_desktops`
 
@@ -132,13 +132,13 @@ Works on: Windows 11 and KDE Plasma 6.
 
 ## Layouts
 
-A layout slot is a saved window position and size plus the width of the AI side panel. Reprompty starts with two slots that are worked out from your monitors: by default, slot A spreads a window over two side-by-side monitors with the side panel filling one of them, and slot B fills one monitor. With a single monitor, both fill it. How slots work and how to change them: [Layouts](layouts.md).
+A layout slot is a saved window position and size plus the width of the AI side panel. Reprompty starts with two example slots, A and B. Set the position and size for your own monitors in `~/.reprompty/layouts.json` (`windowX`, `windowY`, `windowWidth`, `windowHeight`, `panelWidth`). Layouts work on KDE Plasma; built-in layouts for Windows are on the [roadmap](../ROADMAP.md).
 
-You can also apply slot A with Ctrl+Alt+V and slot B with Ctrl+Alt+N. These shortcuts are off by default. On Windows, turn them on in the app; on KDE Plasma, set them up as [system shortcuts](linux-shortcuts.md).
+You can also apply slot A with Ctrl+Alt+V and slot B with Ctrl+Alt+N. On KDE Plasma, set them up as [system shortcuts](linux-shortcuts.md).
 
 ### `list_layout_slots`
 
-Lists the layout slots with their letter and name, and their fixed position and size if they have one. A slot without one is worked out from your monitors each time.
+Lists the layout slots with their letter, name, position and size.
 
 No arguments.
 
@@ -154,9 +154,9 @@ Moves and resizes a VS Code window into a layout slot, then sets the width of it
 | `windowHandle` | No | The window to move, from [`detect_windows`](#detect_windows): its `handle` on Windows; on KDE Plasma its `kdotoolHandle` (a `{...}` id) if it has one, otherwise its `handle`. Preferred over `windowTitle`. |
 | `windowTitle` | No | Part of the window's title. |
 
-With neither `windowHandle` nor `windowTitle`, it uses a VS Code window on your current desktop. On Windows, Reprompty moves the window itself; on KDE Plasma it runs its layout script, which uses `kdotool`.
+With neither `windowHandle` nor `windowTitle`, it uses a VS Code window on your current desktop. It runs Reprompty's layout script, which uses `kdotool`.
 
-Works on: Windows 11 and KDE Plasma 6.
+Works on: KDE Plasma 6. Not built in on Windows yet.
 
 ## Send prompts
 
@@ -377,4 +377,4 @@ An example that ships with Reprompty: [scripts/vscode-toggle-secondary-sidebar.p
 - Reprompty keeps its data in `~/.reprompty/` (on Windows, `.reprompty` in your user folder): `connections.json`, `layouts.json`, `scripts.json`, `settings.json` and `spawn-targets.json`. Task presets are in `~/.config/reprompty/presets/`.
 - The server loads your saved folders, scripts and connections when it starts. After changing them in the app, restart the agent's MCP server.
 - On KDE Plasma, if a tool call ever changes your virtual desktop, the server switches you back.
-- The server writes its log to stderr, so its messages show up wherever your agent keeps MCP server logs. Where the app keeps its logs: [Troubleshooting](troubleshooting.md).
+- The server writes its log to stderr, so its messages show up wherever your agent keeps MCP server logs. Where the app keeps its logs: [Troubleshooting](../README.md#troubleshooting).

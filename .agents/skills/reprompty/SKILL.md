@@ -9,8 +9,8 @@ Reprompty is a desktop app and MCP server for Windows 11 and KDE Plasma 6. Its t
 
 ## Before you start
 
-- No Reprompty tools in your tool list (Claude Code shows them as `mcp__reprompty__<name>`)? The MCP server isn't connected. Send the user to https://github.com/topemalheiro/Reprompty/blob/main/docs/agent-setup.md.
-- A prompt won't send, or `detect_windows` shows no agent panels? Run `check_cdp`. Reprompty types into agent panels through VS Code's debugging port. The user turns it on in Reprompty's **Setup** tab (in a source install, `npm run setup -- cdp` in the `reprompty` folder does the same), then quits VS Code completely and reopens it.
+- No Reprompty tools in your tool list (Claude Code shows them as `mcp__reprompty__<name>`)? The MCP server isn't connected. The user connects it by running `npm run setup` in the `reprompty` folder (see https://github.com/topemalheiro/Reprompty#connect-your-ai-agent).
+- A prompt won't send, or `detect_windows` shows no agent panels? Run `check_cdp`. Reprompty types into agent panels through VS Code's debugging port. The user turns it on with `npm run setup -- cdp` in the `reprompty` folder, then quits VS Code completely and reopens it.
 
 ## Rules
 
@@ -104,7 +104,7 @@ Any other tool in your list whose name comes from the user's scripts is a script
 
 ## Platform notes
 
-- **Windows 11:** the virtual desktop tools need the VirtualDesktop PowerShell module, which Reprompty's Setup tab installs. `duplicate_workspace_in_new_window` isn't available yet.
+- **Windows 11:** the virtual desktop tools need the VirtualDesktop PowerShell module, which `npm run setup` installs. `duplicate_workspace_in_new_window` isn't available yet.
 - **KDE Plasma 6:** Reprompty uses `kdotool` and `qdbus6`; layouts also use `python3` and `kscreen-doctor`. If a tool call ever changes the desktop, the server switches the user back.
 - **Not supported:** GNOME and other Linux desktops, and macOS.
 
@@ -112,7 +112,7 @@ Any other tool in your list whose name comes from the user's scripts is a script
 
 | Message or symptom | What to do |
 | --- | --- |
-| A message about the CDP or debugging port, or `check_cdp` reports it isn't available | The user turns on VS Code's debugging port in Reprompty's Setup tab, then quits VS Code completely and reopens it. |
+| A message about the CDP or debugging port, or `check_cdp` reports it isn't available | The user runs `npm run setup -- cdp` in the `reprompty` folder, then quits VS Code completely and reopens it. |
 | `<agent> webview not found in <window>` | That agent's panel isn't open in the window. Ask the user to open it, or use a connection with another `extension`. |
 | `No unique VS Code CDP target matched` | No window, or more than one, matches the connection's `windowTitle`. Use a longer, unique part of the title from `detect_windows`. |
 | `No background method available` | No open window matches the connection's `windowTitle`, or the window has no agent panel open. Check `detect_windows`; if the title is wrong, remove the connection and add it again with the window's folder name. |
@@ -121,7 +121,7 @@ Any other tool in your list whose name comes from the user's scripts is a script
 | `Slot "..." not found` | Use a letter or name from `list_layout_slots`. |
 | `Unable to isolate a unique spawned VS Code window` | No single new window appeared: the folder may already be open (VS Code then brings that window up instead), or several windows opened at once. Run `detect_windows` and use the window's handle with `apply_layout`. |
 | `More than one Claude session matches` | Retry with the session ID from the list. |
-| Desktop tools fail on Windows | The VirtualDesktop module is missing: the user installs it from Reprompty's Setup tab. |
+| Desktop tools fail on Windows | The VirtualDesktop module is missing: the user runs `npm run setup` (or `Install-Module VirtualDesktop -Scope CurrentUser`). |
 | A saved folder, connection or script tool is missing | The server loads them when it starts: ask the user to restart Reprompty's MCP server. |
 
-Logs: the app writes to the `reprompty-logs` folder in the user's home folder; the MCP server writes to stderr, so its messages show up wherever your agent keeps MCP server logs. More help: https://github.com/topemalheiro/Reprompty/blob/main/docs/troubleshooting.md. KDE layout shortcuts: https://github.com/topemalheiro/Reprompty/blob/main/docs/linux-shortcuts.md.
+Logs: the app writes to the `reprompty-logs` folder in the user's home folder; the MCP server writes to stderr, so its messages show up wherever your agent keeps MCP server logs. More help: https://github.com/topemalheiro/Reprompty#troubleshooting. KDE layout shortcuts: https://github.com/topemalheiro/Reprompty/blob/main/docs/linux-shortcuts.md.
