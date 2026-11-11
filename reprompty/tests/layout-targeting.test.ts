@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 import * as path from "node:path";
 
 import { buildLayoutRunLogPath } from "../src/core/layout-manager.ts";
@@ -27,7 +27,7 @@ function makeWindow(
 describe("layout run log helpers", () => {
   it("creates timestamped log file names in the provided directory", () => {
     const logPath = buildLayoutRunLogPath(
-      "C:\\Users\\topem\\AppData\\Local\\VSCodeSidePanelLayout",
+      "C:\\Users\\example\\AppData\\Local\\VSCodeSidePanelLayout",
       new Date("2026-04-09T10:11:12.345Z"),
       "abc12345"
     );
@@ -42,7 +42,7 @@ describe("window targeting helpers", () => {
   it("builds title hints from the saved window name and folder name", () => {
     expect(
       buildSpawnTitleHints({
-        folderPath: "C:\\Users\\topem\\source\\repos\\Aperant-MCP",
+        folderPath: "C:\\Users\\example\\source\\repos\\Aperant-MCP",
         windowName: "Aperant MCP",
       })
     ).toEqual(["Aperant MCP", "Aperant-MCP"]);

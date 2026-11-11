@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -60,7 +60,7 @@ param([switch]$Once, [switch]$SingleOnce)
 
 describe("spawn target helpers", () => {
   it("normalizes target aliases for MCP-friendly target names", () => {
-    expect(normalizeSpawnTargetId("OS Toolkit")).toBe("windows-project");
+    expect(normalizeSpawnTargetId("Windows Project")).toBe("windows-project");
     expect(normalizeSpawnTargetId("  Repo / AI Window  ")).toBe("repo-ai-window");
   });
 
@@ -76,8 +76,8 @@ describe("spawn target helpers", () => {
 
     const manager = new SpawnTargetManager(dir);
     manager.addTarget({
-      label: "OS Toolkit",
-      folderPath: "C:\\Users\\topem\\Desktop\\OS Toolkit",
+      label: "Windows Project",
+      folderPath: "C:\\Users\\example\\Desktop\\Windows Project",
       desktop: "2",
     });
 

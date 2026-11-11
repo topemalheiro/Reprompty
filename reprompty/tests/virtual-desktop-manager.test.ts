@@ -1,14 +1,14 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 
 import {
   deriveVirtualDesktopName,
   makeUniqueVirtualDesktopName,
   moveWindowToVirtualDesktop,
-  normalizeVirtualDesktopList,
   planEnsureVirtualDesktop,
   resolveVirtualDesktopByName,
   validateVirtualDesktopRename,
 } from "../src/core/virtual-desktop-manager.ts";
+import { normalizeVirtualDesktopList } from "../src/core/virtual-desktop-manager-windows.ts";
 
 describe("virtual desktop helpers", () => {
   it("normalizes PowerShell virtual desktop output", () => {
@@ -57,7 +57,7 @@ describe("virtual desktop helpers", () => {
     expect(
       deriveVirtualDesktopName(
         "Aperant MCP",
-        "C:\\Users\\topem\\source\\repos\\Aperant-MCP"
+        "C:\\Users\\example\\source\\repos\\Aperant-MCP"
       )
     ).toBe("Aperant MCP");
   });
@@ -66,7 +66,7 @@ describe("virtual desktop helpers", () => {
     expect(
       deriveVirtualDesktopName(
         undefined,
-        "C:\\Users\\topem\\source\\repos\\Aperant-MCP\\"
+        "C:\\Users\\example\\source\\repos\\Aperant-MCP\\"
       )
     ).toBe("Aperant-MCP");
   });
