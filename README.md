@@ -1,244 +1,156 @@
 # Reprompty
 
-Reprompty is an MCP Swiss Army knife for AI agent windows, tooling, desktop layouts, and cross-editor orchestration on Windows 11 and KDE/Linux (Wayland I don't think we need to say that). It helps you manage both the visual and technical side of agent workflows, prompt engineering, and lower-friction MCP handoffs.
+Reprompty is a desktop app and MCP server for running several AI coding agents at once. It finds your VS Code windows, opens projects on their own virtual desktops and types prompts into Claude Code, Codex, Kilo Code and Kimi Code, without bringing those windows to the front.
 
-I made a demo video: https://www.youtube.com/watch?v=myEoB4hP7Oo
+Use it from its own window, or connect it to your agents so one agent can open projects and prompt the others. It runs on Windows 11 and KDE Plasma 6 (Linux).
 
-<img width="882" height="690" alt="Screenshot 2026-04-19 185635" src="https://github.com/user-attachments/assets/c10b5f99-d875-4d8f-b377-9c2fc1ddb7c5" />
+![Reprompty on Windows 11, finding a VS Code window with Claude Code open](docs/images/reprompty-windows11.png)
 
-## Overview
+Demo video: <https://www.youtube.com/watch?v=myEoB4hP7Oo>
 
-Reprompty enables you to:
+## What it does
 
-- Shape the actual computer workflow, not just the prompt — Jargon
-- Spawn multiple VS Code windows with isolated chat sessions — isolated?
-- Organize windows, desktops, and layouts around the way you want to work
-- Create prompt templates with XML tags for structured prompting — NOT DONE, GOES TO ROADMAP
-- Automate batch task execution across multiple windows/virtual desktops/and activities on KDE Plasma.
-- Trigger skills and workflows based on conditions — NOT DONE, GOES TO ROADMAP
-- Build agent teams that collaborate on complex tasks
-- Work cleanly alongside projects like [Aperant-MCP](https://github.com/topemalheiro/Aperant-MCP) without adding handoff friction — We're gonna take this off
-- Link LLMs to pass information or sync context to prepare for a merge, for example — kinda redundant to say unless we are gonna talk about memory and chat history the agents communicate between each other
+- Lists your open VS Code windows, with the AI agent panel each one has, the virtual desktop it is on, and whether Reprompty can type into it.
+- Types a prompt into any of those agent panels and sends it, while you keep working in another window.
+- Switches a Claude Code panel to an earlier session first, so the prompt continues the right conversation.
+- Opens a project in a new VS Code window on a named virtual desktop, creating the desktop if needed, while you stay on the desktop you are using.
+- Moves a VS Code window into a saved layout across your monitors and sets the width of its AI side panel (KDE Plasma).
+- Runs your own scripts and turns them into tools your agents can call.
+- Gives your AI agents all of this through an MCP server (the standard way coding agents use outside tools), plus a skill that teaches them how to use it.
 
-## Features
+| | Windows 11 | KDE Plasma 6 |
+| --- | --- | --- |
+| Find VS Code windows and their agent panels | Yes | Yes |
+| Type prompts into Claude Code, Codex, Kilo Code and Kimi Code | Yes | Yes |
+| Switch Claude Code sessions | Yes | Yes |
+| Open projects on named virtual desktops | Yes | Yes |
+| Layouts | Not yet ([roadmap](ROADMAP.md)) | Yes |
+| Open a second window on the same project | Not yet | Yes |
 
-### Window Management
+Other Linux desktops and macOS are not supported yet.
 
-- Spawn duplicate VS Code windows pointing to the same directory — REPETITIVE
-- Each window maintains independent chat history — REDUNDANT
-- Organize windows, desktops, and layouts automatically using scripts and MCP tools
+## Install
 
-### Prompt Engineering
+You need Git, Node.js 20 or newer, and VS Code with at least one of the Claude Code, Codex, Kilo Code or Kimi Code extensions.
 
-- XML-tagged prompt templates — TO BE DONE
-- Variable substitution and context injection
-- Prompt chaining and composition — JARGON
+**Windows 11** (PowerShell):
 
-### Automation
+```powershell
+winget install --id Git.Git -e
+winget install --id OpenJS.NodeJS.LTS -e
+```
 
-- Trigger skills based on events — TO BE DONE AND VAGUE
-- Batch task creation and management — DIDN'T WE JUST SAY THIS
-- Workflow orchestration for multi-agent teams — JARGON
-- Lower-friction handoffs into Aperant-style MCP workflows — WE CAN TAKE THIS OFF
-
-### Agent Teams — LITERALLY REPETITION
-
-- Coordinate multiple AI agents
-- Parallel task execution
-- Result aggregation and synthesis
-
-## Getting Started — ALL USERS NEED TO CLONE??? DOESN'T MAKE SENSE, INSTALL DOESN'T WORK TOO FOR PPL DOING IT MANUALLY
+**KDE Plasma 6** (Arch shown; use your distribution's packages):
 
 ```bash
-# Clone the repository
+sudo pacman -S --needed git nodejs npm python qt6-tools
+yay -S kdotool
+```
+
+Then, on both (open a new terminal on Windows so it finds Git and Node):
+
+```bash
 git clone https://github.com/topemalheiro/Reprompty.git
-
-# Install dependencies
-cd reprompty
+cd Reprompty/reprompty
 npm install
-
-# Run the framework
+npm run setup
 npm start
 ```
 
-## Kilo Code MCP Setup — WE NEED A SECTION FOR SETTING UP THE SKILL AND MCPs OR HYPERLINK WOULD BE EVEN BEST. IT NEEDS TO BE CLEARER
+`npm run setup` connects VS Code and your agents (see the next section). `npm start` builds the app the first time and opens it. Closing the window keeps Reprompty running in the system tray. On KDE Plasma, `npm run setup` also adds Reprompty to your app menu.
 
-Reprompty's stdio MCP server entrypoint is `reprompty/src/mcp/server.ts`.
+After `npm run setup`, quit VS Code completely and open it again, so it picks up the debugging port described below.
 
-After installing dependencies in `reprompty/`, register the MCP server in Kilo Code with:
+## Connect your AI agent
 
-- Working directory: `reprompty`
-- Command: `bun`
-- Args: `run`, `mcp`
-- Equivalent shell command: `cd reprompty && bun run mcp`
+`npm run setup` does everything in one go, for every agent it finds on your computer:
 
-Direct entrypoint alternative:
+- Turns on VS Code's [debugging port](#vs-codes-debugging-port), which Reprompty uses to type into agent panels.
+- Registers Reprompty's MCP server with Claude Code, Codex, Kilo Code and Kimi Code.
+- Installs the Reprompty skill, which tells your agent when and how to use the tools.
+- On Windows, installs the VirtualDesktop PowerShell module that the desktop features need.
 
-- Command: `bun`
-- Args: `run`, `src/mcp/server.ts`
+It only changes Reprompty's own entries and keeps a backup of every file it edits (in `~/.reprompty/backups`). To see what it would change first, run `npm run setup -- all --dry-run`. To check everything later, run `npm run setup -- doctor`.
 
-Do not point Kilo Code at `reprompty/src/mcp/index.ts`; that module contains tool implementations, while `reprompty/src/mcp/server.ts` is the stdio transport that handles MCP `initialize`, `tools/list`, and `tools/call`.
+Then reload your agent (for an agent inside VS Code, reload the window) and ask it: "List my VS Code windows with Reprompty."
 
-## Spawn Targets (Token-Friendly VS Code Spawning) — LOWKEY DUMB
+To connect an agent by hand instead, point it at the MCP server, for example for Claude Code:
 
-Reprompty can save common folders as **spawn targets** so MCP clients can open VS Code windows with a short alias instead of a long `folderPath`.
-
-1. Open Reprompty -> **Spawn** tab.
-2. Under **Saved Spawn Targets**, fill:
-   - Alias (example: `windows-project`)
-   - Label (example: `OS Toolkit`)
-   - Folder Path (example: `C:\Users\topem\Desktop\OS Toolkit`)
-   - Optional window name
-   - Optional default desktop name
-3. Click **Save Target**.
-
-From MCP: — STRAIGHT GIBERISH
-
-```text
-mcp__reprompty__list_spawn_targets
-
-mcp__reprompty__list_virtual_desktops
-
-mcp__reprompty__ensure_virtual_desktop { "name": "Aperant-MCP" }
-
-mcp__reprompty__rename_virtual_desktop { "currentName": "3", "newName": "Focus" }
-
-mcp__reprompty__spawn_window { "target": "windows-project", "desktop": "2" }
-mcp__reprompty__spawn_window { "target": "windows-project", "desktop": "2", "activateDesktop": true }
-mcp__reprompty__spawn_and_layout { "target": "windows-project", "slot": "B", "createDesktop": true }
+```bash
+claude mcp add --scope user reprompty -- node /path/to/Reprompty/reprompty/dist/mcp/server.js
 ```
 
-`spawn_window` and `spawn_and_layout` still support raw `folderPath` if you prefer not to use aliases.
-If `desktop` is supplied and missing, Reprompty creates it and targets that desktop for the spawn.
-If `createDesktop: true` is supplied without an explicit `desktop`, Reprompty creates a fresh desktop named from the saved target label first, otherwise the folder basename.
-Desktop-aware spawns stay on your current desktop by default: Reprompty spawns VS Code, isolates the new window handle, and moves that exact window to the target desktop. If you explicitly want the old switch-first behavior, pass `"activateDesktop": true`.
-`spawn_and_layout` now waits for a uniquely identifiable VS Code window handle after spawn. If Reprompty cannot isolate one window safely, it returns an error instead of moving the wrong editor.
+The server doesn't need the Reprompty app to be open.
 
-## Virtual Desktop Management — THIS SECTION AND THE ONE ABOVE NEED SIMPLIFYING
+## Using the app
 
-Reprompty now treats virtual desktops as a built-in backend capability rather than a script convention.
+**Windows** lists your VS Code windows with their agent panel and desktop. **BG** means Reprompty can type into that window in the background. The list updates by itself when windows open or close.
 
-- `list_virtual_desktops` returns desktop `index`, `name`, and `isCurrent`
-- `ensure_virtual_desktop` creates a named desktop if it is missing and does not switch desktops
-- `rename_virtual_desktop` renames an existing desktop by exact name
-- `spawn_window` and `spawn_and_layout` accept either:
-  - `desktop`: use or auto-create a named desktop
-  - `createDesktop: true`: create a fresh desktop for this spawn
-  - `activateDesktop: true`: opt into switching desktops before the spawn
+**Send Prompt**: pick a window, write a prompt and press **Send**. It appears in that window's agent panel without switching to it.
 
-Important behavior:
+**Spawn** opens a folder in a new VS Code window, optionally on a named desktop. Save the folders you use often under a short name, so you or your agent can open them by that name. **Task presets** save your desktops and project windows so you can reopen them later.
 
-- Desktop names are the public contract for MCP and the Reprompty UI
-- Desktop names refresh from backend polling, so the Windows tab updates after rename
-- Spawn target defaults still work, but `createDesktop: true` overrides them for that one call so a fresh project desktop can be created on demand
-- Desktop-aware spawns no longer switch by default; repeated calls are the intended way to set up multiple desktops and windows while you stay on the current workspace
+**Scripts**: add your own scripts, run or stop them, start them with Reprompty and see their output.
 
-## Script-Defined MCP Tools (Layout Presets) — NEED TO BE CLEARER HERE AND STRAIGHT TO THE POINT
+Extras:
 
-Reprompty can turn **script flags / presets** into first-class(? WE DON'T NEED TO SAY THAT) MCP tools. This is the recommended way to expose layout presets like:
+- **Llama.cpp:** start and stop local models with llama.cpp's `llama-server` from saved presets, and open each model's chat page.
+- **Portainer:** shows your local Portainer dashboard (`https://localhost:9443`) and starts or stops a Graphiti memory server from its Docker Compose folder.
 
-- Ctrl+Alt+V: Dual monitor layout (bottom)
-- Ctrl+Alt+N: Top monitors layout (panel full)
+## Ask your agent
 
-### Option A: Portable Script Headers (Recommended)
+With Reprompty connected, ask in plain words. For example:
 
-Add one or more `reprompty-mcp:` lines near the top of your script (first ~40 lines). Each line is JSON describing one tool.
+- "Open shop-api in a new VS Code window on a desktop called Backend."
+- "Tell the Codex window on the Backend desktop to write tests for the checkout module."
+- "In the Claude Code window for shop-web, go back to the 'Payment form' session and ask it to finish the validation."
+- "Send 'pull main and run the tests' to all my agent windows."
+- "Put the shop-api window in layout A." (KDE Plasma)
 
-Example (PowerShell):
+Every tool and what it needs: [docs/mcp-tools.md](docs/mcp-tools.md).
 
-```powershell
-# reprompty-mcp: {"toolName":"dual_monitor_layout_bottom","label":"Dual monitor layout (bottom)","description":"Run the Ctrl+Alt+V dual monitor bottom layout","args":["-Once"]}
-# reprompty-mcp: {"toolName":"top_monitors_layout_panel_full","label":"Top monitors layout (panel full)","description":"Run the Ctrl+Alt+N top monitors panel-full layout","args":["-SingleOnce"]}
-param(...)
+## Turn your own scripts into tools
+
+In the **Scripts** tab, click **+ Add Script** and choose a script or program. To let your agents run it, add a line like this in a comment within the first 40 lines of the script:
+
+```bash
+# reprompty-mcp: {"toolName":"backup_notes","label":"Back up notes","description":"Copy my notes to the backup drive","args":["--once"]}
 ```
 
-Then in Reprompty:
+Or click **+ Add MCP tool** on the script's card instead of editing the file. Your agent then sees a `backup_notes` tool that runs the script once with those arguments and returns its output. Restart the agent's MCP server after adding tools. Details: [Tools from your scripts](docs/mcp-tools.md#tools-from-your-scripts).
 
-1. Open Reprompty -> **Scripts** tab -> **+ Add Script**.
-2. Point to the script file and save.
-3. In the script card, under **MCP Tools**, click **Re-scan header** if needed and make sure the tools are enabled.
+## Layouts
 
-Now those tool names show up in MCP `tools/list` and can be called directly:
+A layout slot is a window position and size plus the width of the AI side panel. Reprompty starts with two example slots, A and B; set the position and size for your monitors in `~/.reprompty/layouts.json`. Apply a slot by asking your agent, or with Ctrl+Alt+V (slot A) and Ctrl+Alt+N (slot B). On KDE Plasma these are system shortcuts, so they work even when Reprompty is closed: [setting them up](docs/linux-shortcuts.md). Built-in layouts for Windows are on the [roadmap](ROADMAP.md).
 
-```text
-mcp__reprompty__dual_monitor_layout_bottom
-mcp__reprompty__top_monitors_layout_panel_full
-```
+## Troubleshooting
 
-### Option B: UI-Defined Presets (No Script Edits)
+**"Electron failed to install correctly"**: run `node node_modules/electron/install.js` in the `reprompty` folder. `npm install` normally does this for you.
 
-In the **Scripts** tab, click **+ Add MCP tool** inside a script card and set:
+**The app quits straight away when started from a VS Code terminal**: start it with `npm start`, which clears the `ELECTRON_RUN_AS_NODE` setting that VS Code terminals sometimes set.
 
-- Tool name (must be unique across all scripts and not collide with built-in tools)
-- Args (space-separated) to pass into the script (example: `-A` or `-Once`)
+**Your agent doesn't see Reprompty's tools**: run `npm run setup -- doctor`, then reload the agent.
 
-### Important Notes — SHOULDN'T THIS IN A MARKDOWN THAT RELATES TO HOW THE MCP TOOLS WORK?
+**Desktop features fail on Windows**: the VirtualDesktop PowerShell module is missing. Run `npm run setup` again, or `Install-Module VirtualDesktop -Scope CurrentUser`.
 
-- Generated script tools are **one-shot** invocations. The MCP call waits for the script to exit.
-  - If your script is a long-running hotkey listener, add a one-shot switch like `-Once` that runs the layout and exits.
-- Output from MCP-triggered runs is appended to the script terminal with a `[MCP:<toolName>]` prefix.
-- Reprompty passes `-WindowHandle` and `-LogPath` automatically for built-in layout calls, so layout scripts can target an exact VS Code window and write a per-run transcript without changing user-facing flags.
+### VS Code's debugging port
 
-## Linux Global Shortcuts (KDE / Wayland)	— could be its own .md perhaps
+Reprompty types into agent panels through VS Code's local debugging port (the Chrome DevTools Protocol). `npm run setup -- cdp` turns it on by adding `"remote-debugging-port": "9222"` to VS Code's `argv.json`. Quit VS Code completely and open it again afterwards. While the port is on, other programs on your computer can control VS Code too.
 
-On Linux, Reprompty uses **KDE's global shortcut system** (`kglobalaccel`) so layouts work even when Reprompty itself is not running.
+If a window shows no agent badge or prompts don't arrive, check that the port is on and that the agent's panel is open in that window.
 
-### How it connects
+### Logs
 
-1. **`~/.reprompty/layouts.json`** — stores slot coordinates (`windowX`, `windowY`, `windowWidth`, `windowHeight`, `panelWidth`) and `scriptArgs`
+The app writes to `reprompty-logs` in your home folder (`%USERPROFILE%\reprompty-logs` on Windows). The MCP server logs to stderr, so its messages show up in your agent's MCP log. Reprompty keeps its settings in `~/.reprompty`.
 
-   - Slot A: `"scriptArgs": ["--once", "--slot", "A"]`
-   - Slot B: `"scriptArgs": ["--once", "--slot", "B"]`
-2. **`~/.reprompty/scripts.json`** — set `"autoStart": false` so the layout script does **not** resize VS Code: on Reprompty launch.
-3. **Wrapper scripts** (`reprompty/linux/layout-dual.sh`, `layout-single.sh`)
+## How it works
 
-   - Call `linux_layout.py --once --slot A` (or `B`)
-   - The script reads the slot coordinates from `layouts.json` and applies them to the active VS Code: window via CDP.
-4. **KDE shortcut registration**
+Reprompty is built with Electron, React, TypeScript and Vite. Its MCP server is a separate TypeScript program, bundled with esbuild, that each agent starts on its own; it shares Reprompty's settings files, so the app doesn't need to be open. To type into an agent panel, Reprompty uses VS Code's debugging port. It finds and moves windows with the Win32 API on Windows, and with KWin's D-Bus interface, `kdotool` and a Python layout script on KDE Plasma.
 
-   - `~/.local/share/applications/reprompty-layout-dual.desktop` → `Ctrl+Alt+V`
-   - `~/.local/share/applications/reprompty-layout-single.desktop` → `Ctrl+Alt+N`
-   - `~/.config/kglobalshortcutsrc` maps the keys to the `.desktop` files
-   - `~/.config/khotkeysrc` stores the direct command fallback
-5. **Session restart required**
+## Roadmap
 
-   - KDE's `kglobalaccel` daemon caches `.desktop` file `Exec=` lines in memory.
-   - After changing `.desktop` files or `kglobalshortcutsrc`, **log out and back in** for the changes to take effect.
+Planned next: watching each agent's usage limit and easing off before it runs out, shutting the computer down when every agent is done, a master agent that directs the others, shared chat history between agents, Windows layouts and one-click installers. The full list is in [ROADMAP.md](ROADMAP.md).
 
-### Troubleshooting
+## License
 
-- **Shortcut does nothing** → Log out / back in. KDE has the old command cached.
-- **Layout goes to wrong position** → Check `~/.reprompty/layouts.json` slot coordinates. The script uses those exact values when called with `--slot A/B`.
-- **"No VS Code: window found"** → Make sure a VS Code: window is open before pressing the shortcut.
-- **Reprompty resizes VS Code: on launch** → Verify `"autoStart": false` in `scripts.json`.
-
-## Layout Debug Logs — ONLY FOR WINDOWS MAYBE WE PUT IT IN ITS OWN MD
-
-Reprompty now writes two useful log streams for layout troubleshooting:
-
-- App / MCP orchestration log:
-  - `%USERPROFILE%\\reprompty-logs\\reprompty-YYYY-MM-DD.log`
-  - Contains `spawn_and_layout` / `apply_layout` requests, baseline window handles, candidate handles, chosen target, and the generated layout log path.
-- Per-run layout transcript:
-  - `%LOCALAPPDATA%\\VSCodeSidePanelLayout\\layout-run-<timestamp>.log`
-  - Contains the one-shot PowerShell layout transcript, including `Found:`, `Repositioned to:`, title-matching diagnostics, and CDP resize output.
-- CDP repair / health log:
-  - `%LOCALAPPDATA%\\VSCodeSidePanelLayout\\repair.log`
-  - Contains the longer-lived repair and launch-hook health events.
-
-For direct MCP calls:
-
-```text
-mcp__reprompty__apply_layout { "slot": "B", "windowHandle": 123456 }
-```
-
-`windowHandle` is preferred over `windowTitle` when you already know the exact target window.
-
-## Architecture
-
-Reprompty is designed as a modular MCP toolkit that can:
-
-- Run as a VS Code extension — ??? THIS ISN'T RIGHT I THINK
-- 
-- Spawn and manage native Windows processes — I THINK WE ALREADY SAID THIS MANY TIMES AND FOR KDE WE GOTTTA TAKE THIS WHOLE SECTION I THINK.
-- Improve day-to-day UX at the computer-workflow level, not just inside one chat pane — THIS SHOULD BE WRITTEN UP THERE WE DON'T NEED TO REMIND THEM.
+MIT. See [LICENSE](LICENSE).

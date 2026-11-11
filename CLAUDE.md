@@ -6,8 +6,8 @@ Reprompty is an Electron app and a stdio MCP server that find VS Code windows, o
 
 - `reprompty/src/main`, `src/preload`, `src/renderer`: the Electron app (React UI).
 - `reprompty/src/mcp`: the MCP server. `server.ts` is the stdio transport; the tools are in `index.ts` (`BUILT_IN_TOOLS` and `callTool`).
-- `reprompty/src/core`: logic shared by the app and the server. `src/platform`: OS code (`windows.ts`, `linux.ts`). `src/setup`: the Setup tab's checks and the setup command (VS Code's debugging port, agent connections, skill copies).
-- `reprompty/layout/linux_layout.py`: the KDE layout script (Python, standard library only). `reprompty/linux/layout-dual.sh` and `layout-single.sh` call it; keep their paths, because users' KDE shortcuts run them.
+- `reprompty/src/core`: logic shared by the app and the server. `src/platform`: OS code (`windows.ts`, `linux.ts`). `src/setup`: the setup command, `npm run setup` (VS Code's debugging port, agent connections, skill copies, Windows' VirtualDesktop module, the Linux app-menu entry).
+- `VSCodeSidePanelLayout/linux_layout.py`: the KDE layout script (Python, standard library only). `reprompty/linux/layout-dual.sh` and `layout-single.sh` call it; keep their paths, because users' KDE shortcuts run them.
 - `reprompty/skills/reprompty/SKILL.md`: the agent skill. Its copies in `.claude/skills/`, `.agents/skills/` and `.kilocode/skills/` must stay byte-identical.
 - `README.md`, `ROADMAP.md`, `docs/`: user docs. Only document what works; planned work goes in `ROADMAP.md`.
 - `wrappy/`: a separate small VS Code extension that Reprompty doesn't use.
@@ -30,6 +30,3 @@ Reprompty is an Electron app and a stdio MCP server that find VS Code windows, o
 - The MCP server's stdout carries JSON-RPC only: log to stderr.
 - Keep comments sparse and match the surrounding code style.
 
-## Releases
-
-Set `version` in `reprompty/package.json` and push a `vX.Y.Z` tag: GitHub Actions builds the Windows installer and the Linux AppImage.
