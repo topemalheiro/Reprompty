@@ -1,6 +1,6 @@
 import { execFileSync, execSync } from "node:child_process";
-import fs from "node:fs";
 import nodePath from "node:path";
+import { findKdotool } from "./which.js";
 
 export interface VirtualDesktopInfo {
   index: number;
@@ -685,16 +685,11 @@ export async function switchToVirtualDesktop(
 }
 
 function getKdotoolPath(): string {
-  return nodePath.join(process.env.HOME || "", ".local", "bin", "kdotool");
+  return findKdotool() ?? "kdotool";
 }
 
 function hasKdotool(): boolean {
-  try {
-    fs.accessSync(getKdotoolPath(), fs.constants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
+  return findKdotool() !== null;
 }
 
 function findKdotoolHandleByPid(pid: number): string | null {

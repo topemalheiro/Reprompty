@@ -221,7 +221,40 @@ export function validateVirtualDesktopRename(
   };
 }
 
+export const VIRTUAL_DESKTOP_MODULE_MISSING =
+  "Virtual desktops need the VirtualDesktop PowerShell module. Open Reprompty → Setup → Install, or run Install-Module VirtualDesktop -Scope CurrentUser.";
+
+const MODULE_CHECK_TTL_MS = 60_000;
+let moduleCheck: { available: boolean; at: number } | null = null;
+
+function hasVirtualDesktopModule(): boolean {
+  if (moduleCheck && Date.now() - moduleCheck.at < MODULE_CHECK_TTL_MS) {
+    return moduleCheck.available;
+  }
+  try {
+    const output = execFileSync(
+      "powershell.exe",
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "if (Get-Module -ListAvailable -Name VirtualDesktop) { 'yes' } else { 'no' }",
+      ],
+      { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: 30000, windowsHide: true }
+    ).trim();
+    moduleCheck = { available: output !== "no", at: Date.now() };
+    return moduleCheck.available;
+  } catch {
+    // The check itself failed: let the real call report its own error.
+    return true;
+  }
+}
+
 function runVirtualDesktopJson(scriptBody: string): unknown {
+  if (!hasVirtualDesktopModule()) {
+    throw new Error(VIRTUAL_DESKTOP_MODULE_MISSING);
+  }
+
   const tempDir = getWritableTempDir();
   const tempDirEscaped = tempDir.replace(/'/g, "''");
   const ps1Path = nodePath.join(
@@ -232,13 +265,15 @@ function runVirtualDesktopJson(scriptBody: string): unknown {
 $ErrorActionPreference = 'Stop'
 $WarningPreference = 'SilentlyContinue'
 $ProgressPreference = 'SilentlyContinue'
+try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 $env:TEMP = '${tempDirEscaped}'
 $env:TMP = '${tempDirEscaped}'
 Import-Module VirtualDesktop -DisableNameChecking -ErrorAction Stop | Out-Null
 ${scriptBody}
 `;
 
-  fs.writeFileSync(ps1Path, script, "utf-8");
+  // The BOM makes Windows PowerShell 5.1 read the script as UTF-8, not the ANSI code page.
+  fs.writeFileSync(ps1Path, `\uFEFF${script}`, "utf-8");
 
   try {
     const raw = execFileSync(
@@ -253,6 +288,7 @@ ${scriptBody}
       {
         encoding: "utf-8",
         stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
       }
     ).trim();
 
@@ -265,6 +301,10 @@ ${scriptBody}
     const stderr = typeof error?.stderr === "string" ? error.stderr.trim() : "";
     const stdout = typeof error?.stdout === "string" ? error.stdout.trim() : "";
     const message = stderr || stdout || error?.message || String(error);
+    if (/module 'VirtualDesktop' was not loaded/i.test(message)) {
+      moduleCheck = { available: false, at: Date.now() };
+      throw new Error(VIRTUAL_DESKTOP_MODULE_MISSING);
+    }
     throw new Error(message);
   } finally {
     try {
