@@ -222,18 +222,37 @@ export default function LlamaCppTab() {
   };
 
   const handlePickModel = async () => {
-    const path = prompt("Enter full path to .gguf model:", editorPreset.modelPath);
-    if (path !== null) {
-      setEditorPreset({ ...editorPreset, modelPath: path });
+    try {
+      const path = await window.electronAPI.pickPath({
+        title: "Choose a .gguf model",
+        filters: [{ name: "GGUF models", extensions: ["gguf"] }],
+        defaultPath: editorPreset.modelPath || undefined,
+      });
+      if (path) {
+        setEditorPreset((current) => ({ ...current, modelPath: path }));
+      }
+    } catch (err) {
+      setErrorMessage(`Browse failed: ${err}`);
     }
   };
 
   const handlePickBinary = async () => {
-    const path = prompt("Enter full path to llama-server binary:", binaryPath || "");
-    if (path !== null) {
-      await window.electronAPI.llamaSetBinaryPath(path);
-      checkBinary();
+    try {
+      const path = await window.electronAPI.pickPath({
+        title: "Choose llama-server",
+        defaultPath: binaryPath || undefined,
+      });
+      if (path) {
+        await window.electronAPI.llamaSetBinaryPath(path);
+        checkBinary();
+      }
+    } catch (err) {
+      setErrorMessage(`Browse failed: ${err}`);
     }
+  };
+
+  const handleInstallLink = () => {
+    window.electronAPI.openExternal("https://github.com/ggml-org/llama.cpp");
   };
 
   return (
@@ -251,9 +270,12 @@ export default function LlamaCppTab() {
         <div style={styles.warningBanner}>
           <b>llama-server not found.</b>{" "}
           <button style={styles.linkBtn} onClick={handlePickBinary}>
-            Set binary path
+            Choose llama-server
           </button>{" "}
-          or install llama.cpp (e.g., <code>brew install llama.cpp</code> or build from source).
+          or{" "}
+          <button style={styles.linkBtn} onClick={handleInstallLink}>
+            Install llama.cpp (llama-server)
+          </button>
         </div>
       )}
 
@@ -574,13 +596,6 @@ export default function LlamaCppTab() {
           </div>
         </div>
       )}
-
-      {/* Aperant integration hint */}
-      <div style={styles.hintBox}>
-        <b>💡 Aperant-MCP Integration:</b> Start a preset, then in Aperant-MCP add an API profile with Base URL{" "}
-        <code>http://localhost:{statuses.find((s) => s.running)?.port || 8080}/v1</code> and API Key <code>dummy</code>.
-        {statuses.filter((s) => s.running).length > 1 && " Multiple models are running — use the port shown on each row above."}
-      </div>
     </div>
   );
 }
@@ -847,15 +862,5 @@ const styles: Record<string, React.CSSProperties> = {
     gap: "8px",
     marginTop: "16px",
     justifyContent: "flex-end",
-  },
-  hintBox: {
-    padding: "10px 12px",
-    background: "#1a1a2e",
-    border: "1px solid #2d2d44",
-    borderRadius: "4px",
-    color: "#8899cc",
-    fontSize: "12px",
-    marginTop: "auto",
-    flexShrink: 0,
   },
 };

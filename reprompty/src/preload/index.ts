@@ -2,6 +2,8 @@ import { contextBridge, ipcRenderer } from "electron";
 
 // Expose protected methods to the renderer process
 contextBridge.exposeInMainWorld("electronAPI", {
+  platform: process.platform,
+
   spawnWindow: (args: unknown) => ipcRenderer.invoke("spawn-window", args),
   listSpawnTargets: () => ipcRenderer.invoke("spawn-targets-list"),
   listVirtualDesktops: () => ipcRenderer.invoke("virtual-desktops-list"),
@@ -78,10 +80,20 @@ contextBridge.exposeInMainWorld("electronAPI", {
   graphitiStart: () => ipcRenderer.invoke("graphiti-start"),
   graphitiStop: () => ipcRenderer.invoke("graphiti-stop"),
   graphitiStatus: () => ipcRenderer.invoke("graphiti-status"),
+  setGraphitiComposeDir: (dir: string) => ipcRenderer.invoke("graphiti-set-compose-dir", dir),
 
   // Generic MCP tool runner (for save/load task presets, etc.)
   runMcpTool: (toolName: string, args?: Record<string, unknown>) =>
     ipcRenderer.invoke("run-mcp-tool", toolName, args || {}),
 
+  // File or folder chooser; resolves to the chosen path, or null when cancelled.
+  pickPath: (opts?: {
+    directory?: boolean;
+    filters?: Array<{ name: string; extensions: string[] }>;
+    defaultPath?: string;
+    title?: string;
+  }) => ipcRenderer.invoke("pick-path", opts ?? {}),
+
   openPath: (path: string) => ipcRenderer.invoke("open-path", path),
+  openExternal: (url: string) => ipcRenderer.send("open-external", url),
 });

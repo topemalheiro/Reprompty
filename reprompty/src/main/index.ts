@@ -18,6 +18,8 @@ import { listVirtualDesktops } from "../core/virtual-desktop-manager.js";
 import { getOrCreateIpcClient, removeIpcClient } from "../core/ipc-client.js";
 import { getCdpWindowSignature } from "../core/cdp-client.js";
 import type { VSCodeWindowConfig } from "../core/connection-manager.js";
+import { findExecutable } from "../core/which.js";
+import { readSettings, writeSettings } from "../core/settings.js";
 import * as platform from "../platform/index.js";
 
 // CRITICAL EARLY LOG - write directly to stderr to bypass any console override
@@ -111,6 +113,7 @@ const electron = {
   nativeImage: electronModule.nativeImage,
   ipcMain: electronModule.ipcMain,
   shell: electronModule.shell,
+  dialog: electronModule.dialog,
   globalShortcut: (electronModule as any).globalShortcut
 };
 
@@ -139,6 +142,23 @@ let tray: any = null;
 
 const isDev = !electron.app.isPackaged;
 
+// A second launch focuses the running app instead of starting another one.
+if (!electron.app.requestSingleInstanceLock()) {
+  console.log("[Main] Reprompty is already running; focusing it instead");
+  electron.app.quit();
+  process.exit(0);
+}
+
+electron.app.on("second-instance", () => {
+  if (!mainWindow) {
+    if (electron.app.isReady()) createWindow();
+    return;
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+});
+
 function createWindow() {
   console.log("[Main] isDev:", isDev);
   console.log("[Main] app.isPackaged:", electron.app.isPackaged);
@@ -159,8 +179,13 @@ function createWindow() {
     },
   });
 
-  // Always load production build - don't try to connect to dev server
-  mainWindow.loadFile(join(__dirname, "../renderer/index.html"));
+  // Set by `vite` (vite-plugin-electron) in dev, for hot reload.
+  const devServerUrl = process.env.VITE_DEV_SERVER_URL;
+  if (devServerUrl) {
+    mainWindow.loadURL(devServerUrl);
+  } else {
+    mainWindow.loadFile(join(__dirname, "../renderer/index.html"));
+  }
 
   mainWindow.on("close", (event: any) => {
     if (tray) {
@@ -182,12 +207,17 @@ function createTray() {
   
   let icon;
   
-  // Try multiple icon sources - use createFromPath which handles ICO better
+  // build-resources/ when run from source, resources/ in an installed app.
   const iconPaths = [
-    join(__dirname, "../../build/icon.ico"),
-    join(__dirname, "../../build/icon.png"),
-    join(process.resourcesPath, "icon.ico"),
-    join(process.resourcesPath, "icon.png"),
+    join(__dirname, "../../build-resources/tray.png"),
+    join(__dirname, "../../build-resources/icon.png"),
+    ...(process.resourcesPath
+      ? [
+          join(process.resourcesPath, "tray.png"),
+          join(process.resourcesPath, "icon.png"),
+          join(process.resourcesPath, "icon.ico"),
+        ]
+      : []),
   ];
   
   // Try createFromPath for each file (works better with ICO files)
@@ -314,6 +344,10 @@ electron.app.whenReady().then(() => {
           // Re-use the existing start logic via IPC isn't possible here,
           // so we inline the spawn directly.
           const preset = JSON.parse(fs.readFileSync(presetPath, "utf-8"));
+          if (!preset.modelPath) {
+            console.warn(`[Main] Cannot auto-start '${presetName}': no model file chosen`);
+            continue;
+          }
           if (getRunningServerForPreset(presetName)) {
             console.log(`[Main] Preset '${presetName}' already running, skipping autostart`);
             continue;
@@ -336,7 +370,11 @@ electron.app.whenReady().then(() => {
           if (preset.extraArgs) args.push(...preset.extraArgs.split(/\s+/).filter(Boolean));
           const logPath = nodePath.join(LLAMA_LOGS_DIR, `${presetName}-${Date.now()}.log`);
           const logFd = fs.openSync(logPath, "a");
-          const proc = spawn(binary, args, { detached: true, stdio: ["ignore", logFd, logFd] });
+          const proc = spawn(binary, args, {
+            detached: true,
+            stdio: ["ignore", logFd, logFd],
+            windowsHide: true,
+          });
           proc.unref();
           fs.closeSync(logFd);
           const servers = readServersRegistry();
@@ -561,7 +599,7 @@ electron.ipcMain.handle("send-to-detected", async (_event: any, args: { window: 
 
   // Direct file logging (bypasses console wrapper which may be broken)
   const dbg = (msg: string) => {
-    try { fs.appendFileSync(nodePath.join(process.env.USERPROFILE || ".", "reprompty-cdp-debug.log"), `${new Date().toISOString()} ${msg}\n`); } catch {}
+    try { fs.appendFileSync(nodePath.join(os.homedir(), "reprompty-logs", "cdp-debug.log"), `${new Date().toISOString()} ${msg}\n`); } catch {}
   };
 
   dbg(
@@ -726,7 +764,7 @@ electron.ipcMain.handle("daisy-chain", async (_event: any, args: { prompts: Arra
 
 // Handle external links
 electron.ipcMain.on("open-external", (_event: any, url: string) => {
-  electron.shell.openExternal(url);
+  if (/^https?:\/\//i.test(url)) electron.shell.openExternal(url);
 });
 
 // ============================================================================
@@ -774,12 +812,36 @@ electron.ipcMain.handle("scripts-pick-file", async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     properties: ["openFile"],
     filters: [
-      { name: "Scripts", extensions: process.platform === "win32" ? ["ps1", "bat", "cmd", "vbs", "exe"] : ["sh", "py", "bash", "zsh", "ps1"] },
+      { name: "Scripts", extensions: process.platform === "win32" ? ["ps1", "bat", "cmd", "vbs", "exe", "sh", "py"] : ["sh", "py", "bash", "zsh", "ps1"] },
       { name: "All Files", extensions: ["*"] },
     ],
   });
   return result.canceled ? null : result.filePaths[0];
 });
+
+electron.ipcMain.handle(
+  "pick-path",
+  async (
+    _event: any,
+    opts: {
+      directory?: boolean;
+      filters?: Array<{ name: string; extensions: string[] }>;
+      defaultPath?: string;
+      title?: string;
+    } = {}
+  ) => {
+    const options = {
+      properties: [opts.directory ? "openDirectory" : "openFile"],
+      filters: opts.directory ? undefined : opts.filters,
+      defaultPath: opts.defaultPath || undefined,
+      title: opts.title,
+    };
+    const result = mainWindow
+      ? await electron.dialog.showOpenDialog(mainWindow, options)
+      : await electron.dialog.showOpenDialog(options);
+    return result.canceled ? null : result.filePaths[0] ?? null;
+  }
+);
 
 // ============================================================================
 // LAYOUT SLOTS IPC HANDLERS
@@ -866,7 +928,6 @@ const LLAMA_PRESETS_DIR = nodePath.join(REPROMPTY_CONFIG_DIR, "llama-cpp-presets
 const LLAMA_SERVERS_FILE = nodePath.join(REPROMPTY_CONFIG_DIR, "llama-servers.json");
 const LLAMA_CONFIG_FILE = nodePath.join(REPROMPTY_CONFIG_DIR, "llama-config.json");
 const LLAMA_LOGS_DIR = nodePath.join(REPROMPTY_CONFIG_DIR, "llama-logs");
-const GRAPHITI_COMPOSE_DIR = nodePath.join(os.homedir(), "Projects", "OS-Toolkit", "graphiti-mcp");
 
 function ensureConfigDir() {
   if (!fs.existsSync(REPROMPTY_CONFIG_DIR)) {
@@ -992,12 +1053,12 @@ function writeLlamaConfig(config: Record<string, unknown>) {
 }
 
 function getLlamaServerPath(): string | null {
-  const config = fs.existsSync(LLAMA_CONFIG_FILE)
-    ? JSON.parse(fs.readFileSync(LLAMA_CONFIG_FILE, "utf-8"))
-    : {};
-  if (config.binaryPath && fs.existsSync(config.binaryPath)) {
-    return config.binaryPath;
+  const configured = readLlamaConfig().binaryPath;
+  if (typeof configured === "string" && configured && fs.existsSync(configured)) {
+    return configured;
   }
+  const onPath = findExecutable("llama-server");
+  if (onPath) return onPath;
   const candidates = [
     nodePath.join(os.homedir(), ".local", "bin", "llama-server"),
     "/usr/local/bin/llama-server",
@@ -1023,99 +1084,36 @@ function getHardwareDefaults() {
   };
 }
 
-function createDefaultPresets() {
+// Only when there are no presets yet; the model file is chosen in the editor.
+function createExamplePreset() {
   ensureConfigDir();
+  if (fs.readdirSync(LLAMA_PRESETS_DIR).some((f) => f.endsWith(".json"))) return;
   const hw = getHardwareDefaults();
-  const defaults: Record<string, unknown> = {
-    "qwen3-embedding:8b": {
-      name: "qwen3-embedding:8b",
-      modelPath: nodePath.join(os.homedir(), ".local", "share", "models", "qwen3-embedding-8b-q8_0.gguf"),
-      modelType: "embedding",
-      quantization: "Q8_0",
-      port: 8081,
-      contextSize: 8192,
-      gpuLayers: 0,
-      threads: hw.threads,
-      batchSize: hw.batchSize,
-      ubatchSize: hw.ubatchSize,
-      temperature: 0.0,
-      topP: 1.0,
-      topK: 0,
-      repeatPenalty: 1.0,
-      maxTokens: -1,
-      chatTemplate: "",
-      extraArgs: "--embedding",
-    },
-    "gemma-4-31b-chat": {
-      name: "gemma-4-31b-chat",
-      modelPath: nodePath.join(os.homedir(), ".local", "share", "models", "gemma-4-31b-it-Q8_0.gguf"),
-      modelType: "chat",
-      quantization: "Q8_0",
-      port: 8082,
-      contextSize: hw.contextSize,
-      gpuLayers: 0,
-      threads: hw.threads,
-      batchSize: hw.batchSize,
-      ubatchSize: hw.ubatchSize,
-      temperature: 0.8,
-      topP: 0.9,
-      topK: 40,
-      repeatPenalty: 1.1,
-      maxTokens: -1,
-      chatTemplate: "gemma",
-      extraArgs: "",
-    },
-    "qwen3.6-27b-chat": {
-      name: "qwen3.6-27b-chat",
-      modelPath: nodePath.join(os.homedir(), ".local", "share", "models", "qwen3.6-27b-Q8_0.gguf"),
-      modelType: "chat",
-      quantization: "Q8_0",
-      port: 8083,
-      contextSize: hw.contextSize,
-      gpuLayers: 0,
-      threads: hw.threads,
-      batchSize: hw.batchSize,
-      ubatchSize: hw.ubatchSize,
-      temperature: 0.8,
-      topP: 0.9,
-      topK: 40,
-      repeatPenalty: 1.1,
-      maxTokens: -1,
-      chatTemplate: "qwen",
-      extraArgs: "",
-    },
-    "vocal-model": {
-      name: "vocal-model",
-      modelPath: nodePath.join(os.homedir(), ".local", "share", "models", "vocal-model.gguf"),
-      modelType: "voice",
-      quantization: "Q8_0",
-      port: 8084,
-      contextSize: 4096,
-      gpuLayers: 0,
-      threads: hw.threads,
-      batchSize: 512,
-      ubatchSize: 512,
-      temperature: 0.6,
-      topP: 0.9,
-      topK: 40,
-      repeatPenalty: 1.0,
-      maxTokens: -1,
-      chatTemplate: "",
-      extraArgs: "",
-    },
+  const example = {
+    name: "example",
+    modelPath: "",
+    modelType: "chat",
+    quantization: "Q8_0",
+    port: 8080,
+    contextSize: hw.contextSize,
+    gpuLayers: 0,
+    threads: hw.threads,
+    batchSize: hw.batchSize,
+    ubatchSize: hw.ubatchSize,
+    temperature: 0.8,
+    topP: 0.9,
+    topK: 40,
+    repeatPenalty: 1.1,
+    maxTokens: -1,
+    chatTemplate: "",
+    extraArgs: "",
   };
-  for (const [name, preset] of Object.entries(defaults)) {
-    const path = nodePath.join(LLAMA_PRESETS_DIR, `${name}.json`);
-    if (!fs.existsSync(path)) {
-      fs.writeFileSync(path, JSON.stringify(preset, null, 2));
-    }
-  }
+  fs.writeFileSync(nodePath.join(LLAMA_PRESETS_DIR, "example.json"), JSON.stringify(example, null, 2));
 }
 
 // Llama.cpp IPC handlers
 electron.ipcMain.handle("llama-list-presets", async () => {
-  ensureConfigDir();
-  createDefaultPresets();
+  createExamplePreset();
   const files = fs.readdirSync(LLAMA_PRESETS_DIR).filter((f) => f.endsWith(".json"));
   return files.map((f) => f.replace(".json", ""));
 });
@@ -1148,6 +1146,9 @@ electron.ipcMain.handle("llama-start", async (_event: any, presetName: string) =
   const presetPath = nodePath.join(LLAMA_PRESETS_DIR, `${presetName}.json`);
   if (!fs.existsSync(presetPath)) return { success: false, error: `Preset '${presetName}' not found` };
   const preset = JSON.parse(fs.readFileSync(presetPath, "utf-8"));
+  if (!preset.modelPath) {
+    return { success: false, error: `Preset '${presetName}' has no model file. Edit it and choose a .gguf model.` };
+  }
 
   // Check if this preset is already running
   const existing = getRunningServerForPreset(presetName);
@@ -1177,6 +1178,7 @@ electron.ipcMain.handle("llama-start", async (_event: any, presetName: string) =
   const proc = spawn(binary, args, {
     detached: true,
     stdio: ["ignore", logFd, logFd],
+    windowsHide: true,
   });
   proc.unref();
   fs.closeSync(logFd);
@@ -1258,9 +1260,27 @@ electron.ipcMain.handle("llama-set-binary-path", async (_event: any, binaryPath:
 });
 
 // Graphiti MCP IPC handlers
+const GRAPHITI_FOLDER_MISSING = "Choose your Graphiti docker compose folder first";
+const COMPOSE_FILE_NAMES = ["compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"];
+
+function graphitiComposeDir(): string | null {
+  const dir = readSettings().graphitiComposeDir;
+  return dir && fs.existsSync(dir) ? dir : null;
+}
+
+electron.ipcMain.handle("graphiti-set-compose-dir", async (_event: any, dir: string) => {
+  if (!dir || !COMPOSE_FILE_NAMES.some((name) => fs.existsSync(nodePath.join(dir, name)))) {
+    return { success: false, error: `No docker compose file (compose.yaml or docker-compose.yml) in ${dir}` };
+  }
+  writeSettings({ graphitiComposeDir: dir });
+  return { success: true, composeDir: dir };
+});
+
 electron.ipcMain.handle("graphiti-start", async () => {
+  const cwd = graphitiComposeDir();
+  if (!cwd) return { success: false, error: GRAPHITI_FOLDER_MISSING };
   return new Promise((resolve) => {
-    exec("docker compose up -d", { cwd: GRAPHITI_COMPOSE_DIR }, (error, stdout, stderr) => {
+    exec("docker compose up -d", { cwd, windowsHide: true }, (error, stdout, stderr) => {
       if (error) {
         resolve({ success: false, error: stderr || String(error) });
       } else {
@@ -1271,8 +1291,10 @@ electron.ipcMain.handle("graphiti-start", async () => {
 });
 
 electron.ipcMain.handle("graphiti-stop", async () => {
+  const cwd = graphitiComposeDir();
+  if (!cwd) return { success: false, error: GRAPHITI_FOLDER_MISSING };
   return new Promise((resolve) => {
-    exec("docker compose down", { cwd: GRAPHITI_COMPOSE_DIR }, (error, stdout, stderr) => {
+    exec("docker compose down", { cwd, windowsHide: true }, (error, stdout, stderr) => {
       if (error) {
         resolve({ success: false, error: stderr || String(error) });
       } else {
@@ -1283,10 +1305,12 @@ electron.ipcMain.handle("graphiti-stop", async () => {
 });
 
 electron.ipcMain.handle("graphiti-status", async () => {
+  const cwd = graphitiComposeDir();
+  if (!cwd) return { running: false, composeDir: null, error: GRAPHITI_FOLDER_MISSING };
   return new Promise((resolve) => {
-    exec("docker compose ps --format json", { cwd: GRAPHITI_COMPOSE_DIR }, (error, stdout) => {
+    exec("docker compose ps --format json", { cwd, windowsHide: true }, (error, stdout) => {
       if (error) {
-        resolve({ running: false });
+        resolve({ running: false, composeDir: cwd });
         return;
       }
       const lines = stdout.trim().split("\n").filter(Boolean);
@@ -1296,18 +1320,18 @@ electron.ipcMain.handle("graphiti-status", async () => {
           return obj.State === "running";
         } catch { return false; }
       });
-      resolve({ running });
+      resolve({ running, composeDir: cwd });
     });
   });
 });
 
-electron.ipcMain.handle("open-path", async (_event, filePath: string) => {
+electron.ipcMain.handle("open-path", async (_event: any, filePath: string) => {
   const result = await electron.shell.openPath(filePath);
   return result;
 });
 
 // Allow self-signed certificates for local Portainer
-electron.app.on("certificate-error", (event, _webContents, url, _error, _certificate, callback) => {
+electron.app.on("certificate-error", (event: any, _webContents: any, url: string, _error: any, _certificate: any, callback: (trusted: boolean) => void) => {
   if (url.includes("localhost:9443") || url.includes("127.0.0.1:9443")) {
     event.preventDefault();
     callback(true);
