@@ -102,6 +102,13 @@ export const RESERVED_MCP_TOOL_NAMES = [
   "detect_windows",
   "detect_all_windows",
   "check_cdp",
+  "list_claude_sessions",
+  "select_claude_session",
+  "save_task_preset",
+  "load_task_preset",
+  "list_task_presets",
+  "delete_task_preset",
+  "duplicate_workspace_in_new_window",
 ] as const;
 
 function resolvePowerShellCommand(): string {
