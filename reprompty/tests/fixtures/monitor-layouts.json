@@ -1,0 +1,116 @@
+{
+  "about": "Monitor setups with the expected slot geometry: dual is slot A, single is slot B. Cases with linux true have no work areas, so linux_layout.py can use them too. sashFraction is the divider's offset from the window's left edge as a share of its width.",
+  "cases": [
+    {
+      "name": "author's KDE setup, logical px (two 1.2-scaled 1080p at the bottom)",
+      "linux": true,
+      "monitors": [
+        { "name": "HDMI-A-1", "x": 1360, "y": 1083, "width": 1600, "height": 900, "primary": false },
+        { "name": "HDMI-A-4", "x": 1360, "y": 0, "width": 1920, "height": 1080, "primary": true },
+        { "name": "DP-1", "x": 2960, "y": 1083, "width": 1600, "height": 900, "primary": false },
+        { "name": "DP-3", "x": 0, "y": 449, "width": 1360, "height": 768, "primary": false }
+      ],
+      "expected": {
+        "dual": { "x": 1360, "y": 1083, "width": 3200, "height": 900, "sashFraction": 0.5, "monitors": ["HDMI-A-1", "DP-1"] },
+        "single": { "x": 1360, "y": 0, "width": 1920, "height": 1080, "sashFraction": 0.5, "monitors": ["HDMI-A-4"] }
+      }
+    },
+    {
+      "name": "author's Windows setup, physical px with taskbars",
+      "linux": false,
+      "monitors": [
+        { "name": "DISPLAY1", "x": 0, "y": 0, "width": 1920, "height": 1080, "work": { "x": 0, "y": 0, "width": 1920, "height": 1032 }, "primary": true },
+        { "name": "DISPLAY2", "x": -1360, "y": 449, "width": 1360, "height": 768, "work": { "x": -1360, "y": 449, "width": 1360, "height": 768 } },
+        { "name": "DISPLAY6", "x": 0, "y": 1083, "width": 1920, "height": 1080, "work": { "x": 0, "y": 1083, "width": 1920, "height": 1032 } },
+        { "name": "DISPLAY5", "x": 1920, "y": 1002, "width": 1920, "height": 1080, "work": { "x": 1920, "y": 1002, "width": 1920, "height": 1032 } }
+      ],
+      "expected": {
+        "dual": { "x": 0, "y": 1083, "width": 3840, "height": 951, "sashFraction": 0.5, "monitors": ["DISPLAY6", "DISPLAY5"] },
+        "single": { "x": 0, "y": 0, "width": 1920, "height": 1032, "sashFraction": 0.5, "monitors": ["DISPLAY1"] }
+      }
+    },
+    {
+      "name": "laptop: both slots fill the one screen",
+      "linux": true,
+      "monitors": [
+        { "name": "eDP-1", "x": 0, "y": 0, "width": 1920, "height": 1200, "primary": true }
+      ],
+      "expected": {
+        "dual": { "x": 0, "y": 0, "width": 1920, "height": 1200, "sashFraction": 0.5, "monitors": ["eDP-1"] },
+        "single": { "x": 0, "y": 0, "width": 1920, "height": 1200, "sashFraction": 0.5, "monitors": ["eDP-1"] }
+      }
+    },
+    {
+      "name": "laptop with a taskbar: the work area, not the screen",
+      "linux": false,
+      "monitors": [
+        { "name": "DISPLAY1", "x": 0, "y": 0, "width": 2560, "height": 1600, "work": { "x": 0, "y": 0, "width": 2560, "height": 1528 }, "primary": true }
+      ],
+      "expected": {
+        "dual": { "x": 0, "y": 0, "width": 2560, "height": 1528, "sashFraction": 0.5, "monitors": ["DISPLAY1"] },
+        "single": { "x": 0, "y": 0, "width": 2560, "height": 1528, "sashFraction": 0.5, "monitors": ["DISPLAY1"] }
+      }
+    },
+    {
+      "name": "two equal monitors, one at negative x",
+      "linux": true,
+      "monitors": [
+        { "name": "DP-2", "x": -2560, "y": 0, "width": 2560, "height": 1440, "primary": false },
+        { "name": "DP-1", "x": 0, "y": 0, "width": 2560, "height": 1440, "primary": true }
+      ],
+      "expected": {
+        "dual": { "x": -2560, "y": 0, "width": 5120, "height": 1440, "sashFraction": 0.5, "monitors": ["DP-2", "DP-1"] },
+        "single": { "x": 0, "y": 0, "width": 2560, "height": 1440, "sashFraction": 0.5, "monitors": ["DP-1"] }
+      }
+    },
+    {
+      "name": "unequal 3840 + 1920: divider on the seam, height of the overlap",
+      "linux": true,
+      "monitors": [
+        { "name": "DP-1", "x": 0, "y": 0, "width": 3840, "height": 2160, "primary": true },
+        { "name": "HDMI-A-1", "x": 3840, "y": 0, "width": 1920, "height": 1080, "primary": false }
+      ],
+      "expected": {
+        "dual": { "x": 0, "y": 0, "width": 5760, "height": 1080, "sashFraction": 0.66667, "monitors": ["DP-1", "HDMI-A-1"] },
+        "single": { "x": 0, "y": 0, "width": 3840, "height": 2160, "sashFraction": 0.5, "monitors": ["DP-1"] }
+      }
+    },
+    {
+      "name": "stacked vertically: no side-by-side pair, so A and B take one monitor each",
+      "linux": true,
+      "monitors": [
+        { "name": "DP-1", "x": 0, "y": 0, "width": 1920, "height": 1080, "primary": false },
+        { "name": "DP-2", "x": 0, "y": 1080, "width": 1920, "height": 1080, "primary": true }
+      ],
+      "expected": {
+        "dual": { "x": 0, "y": 1080, "width": 1920, "height": 1080, "sashFraction": 0.5, "monitors": ["DP-2"] },
+        "single": { "x": 0, "y": 0, "width": 1920, "height": 1080, "sashFraction": 0.5, "monitors": ["DP-1"] }
+      }
+    },
+    {
+      "name": "three in a row: A takes the first pair, B the third monitor",
+      "linux": true,
+      "monitors": [
+        { "name": "DP-3", "x": 3840, "y": 0, "width": 1920, "height": 1080, "primary": false },
+        { "name": "DP-1", "x": 0, "y": 0, "width": 1920, "height": 1080, "primary": false },
+        { "name": "DP-2", "x": 1920, "y": 0, "width": 1920, "height": 1080, "primary": true }
+      ],
+      "expected": {
+        "dual": { "x": 0, "y": 0, "width": 3840, "height": 1080, "sashFraction": 0.5, "monitors": ["DP-1", "DP-2"] },
+        "single": { "x": 3840, "y": 0, "width": 1920, "height": 1080, "sashFraction": 0.5, "monitors": ["DP-3"] }
+      }
+    },
+    {
+      "name": "side by side with too little vertical overlap: not a pair",
+      "linux": true,
+      "monitors": [
+        { "name": "DP-1", "x": 0, "y": 0, "width": 1920, "height": 1080, "primary": true },
+        { "name": "DP-2", "x": 1920, "y": 700, "width": 1920, "height": 1080, "primary": false }
+      ],
+      "expected": {
+        "dual": { "x": 0, "y": 0, "width": 1920, "height": 1080, "sashFraction": 0.5, "monitors": ["DP-1"] },
+        "single": { "x": 1920, "y": 700, "width": 1920, "height": 1080, "sashFraction": 0.5, "monitors": ["DP-2"] }
+      }
+    }
+  ]
+}
