@@ -44,6 +44,7 @@ interface SpawnWindowResult {
 }
 
 interface ElectronAPI {
+  platform: string;
   spawnWindow: (args: {
     folderPath: string;
     windowName?: string;
@@ -100,19 +101,30 @@ interface ElectronAPI {
   llamaDeletePreset: (name: string) => Promise<boolean>;
   llamaStart: (presetName: string) => Promise<{ success: boolean; pid?: number; port?: number; error?: string }>;
   llamaStop: () => Promise<{ success: boolean }>;
+  llamaStopPreset: (presetName: string) => Promise<{ success: boolean }>;
   llamaStatus: () => Promise<{ running: boolean; pid?: number; port?: number; preset?: string; logPath?: string }>;
   llamaGetBinaryPath: () => Promise<string | null>;
   llamaSetBinaryPath: (path: string) => Promise<boolean>;
+  llamaGetAutostart: () => Promise<string[]>;
+  llamaSetAutostart: (presetName: string, enabled: boolean) => Promise<string[]>;
 
   // Graphiti MCP
   graphitiStart: () => Promise<{ success: boolean; error?: string; output?: string }>;
   graphitiStop: () => Promise<{ success: boolean; error?: string; output?: string }>;
-  graphitiStatus: () => Promise<{ running: boolean }>;
+  graphitiStatus: () => Promise<{ running: boolean; composeDir?: string | null; error?: string }>;
+  setGraphitiComposeDir: (dir: string) => Promise<{ success: boolean; composeDir?: string; error?: string }>;
 
   // Generic MCP tool runner
   runMcpTool: (toolName: string, args?: Record<string, unknown>) => Promise<string>;
 
+  pickPath: (opts?: {
+    directory?: boolean;
+    filters?: Array<{ name: string; extensions: string[] }>;
+    defaultPath?: string;
+    title?: string;
+  }) => Promise<string | null>;
   openPath: (path: string) => Promise<string>;
+  openExternal: (url: string) => void;
 }
 
 declare global {
@@ -196,7 +208,7 @@ function App() {
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-+|-+$/g, "");
-    return alias || "windows-project";
+    return alias || "my-project";
   }, [editingTargetId, targetIdInput, targetLabelInput]);
 
   const virtualDesktopSummary = useMemo(
@@ -585,8 +597,8 @@ function App() {
               </div>
             </div>
             <div style={styles.desktopHint}>
-              Desktop labels refresh from backend polling. Desktop-aware spawns now stay on your
-              current desktop unless `activateDesktop: true` is explicitly requested.
+              The list updates when VS Code windows open or close. Reprompty never switches your
+              desktop.
             </div>
             {detectedWindows.length === 0 ? (
               <p style={styles.empty}>No VS Code / Kilo Code windows detected</p>
@@ -644,14 +656,7 @@ function App() {
             >
               <option value="">Select a window...</option>
               {detectedWindows.map((windowInfo) => {
-                const agent =
-                  windowInfo.activeAgent === "kilo-code" || windowInfo.activeAgent === "kimi-code"
-                    ? "Kilo"
-                    : windowInfo.activeAgent === "claude-code"
-                    ? "Claude"
-                    : windowInfo.activeAgent === "codex"
-                    ? "Codex"
-                    : "?";
+                const agent = agentBadge(windowInfo.activeAgent).label;
                 const method = windowInfo.backgroundRoute === "foreground" ? "FG" : "BG";
                 return (
                   <option key={windowInfo.kdotoolHandle || windowInfo.handle} value={String(windowInfo.kdotoolHandle || windowInfo.handle)}>
@@ -681,21 +686,18 @@ function App() {
             <h2 style={styles.panelTitle}>Spawn VS Code Window</h2>
             <div style={styles.spawnHelp}>
               <div style={styles.helpCard}>
-                <strong style={styles.helpTitle}>Built-in MCP Spawn/Desktop Tools</strong>
+                <strong style={styles.helpTitle}>Open projects on their own desktops</strong>
                 <div style={styles.helpBody}>
-                  `spawn_window` and `spawn_and_layout` accept `target` aliases plus optional
-                  `desktop`, `createDesktop`, and `activateDesktop`. Desktop-aware spawns stay on
-                  the current desktop by default and only switch when `activateDesktop: true` is
-                  supplied. `list_virtual_desktops`, `ensure_virtual_desktop`, and
-                  `rename_virtual_desktop` manage desktop names from the backend.
+                  Opens a folder in a new VS Code window, on your current desktop or on a named one
+                  (created if it doesn't exist). You stay on your current desktop. Save folders you
+                  use often under a short alias, so you or your agent can open them by name.
                 </div>
               </div>
               <div style={styles.helpCard}>
-                <strong style={styles.helpTitle}>Example</strong>
-                <code style={styles.helpCode}>
-                  spawn_and_layout
-                  {`{ "target": "${selectedTargetPreview}", "slot": "B", "createDesktop": true }`}
-                </code>
+                <strong style={styles.helpTitle}>Ask your agent</strong>
+                <div style={styles.helpBody}>
+                  "Open {selectedTargetPreview} on a new desktop and put it in layout B."
+                </div>
               </div>
             </div>
 
@@ -750,7 +752,7 @@ function App() {
               <h3 style={styles.sectionTitle}>Quick Spawn</h3>
               <input
                 style={styles.input}
-                placeholder="Folder Path (e.g. C:\\Users\\topem\\my-project)"
+                placeholder="Folder path"
                 value={folderPath}
                 onChange={(event) => setFolderPath(event.target.value)}
               />
@@ -768,9 +770,8 @@ function App() {
                 {renderDesktopOptions(quickDesktopName)}
               </select>
               <div style={styles.desktopHint}>
-                Available desktops: {virtualDesktopSummary || "No virtual desktops detected"}. MCP
-                can also create a fresh desktop per spawn with `createDesktop: true`, and it stays
-                on your current desktop unless `activateDesktop: true` is requested.
+                Available desktops: {virtualDesktopSummary || "No virtual desktops detected"}. The
+                window opens on the chosen desktop while you stay on your current one.
               </div>
               <button style={{ ...styles.btn, marginTop: 12 }} onClick={spawnWindow}>
                 Spawn Window
@@ -789,7 +790,7 @@ function App() {
                 <div style={styles.formGrid}>
                   <input
                     style={styles.input}
-                    placeholder="Alias (e.g. windows-project)"
+                    placeholder="Alias (e.g. my-project)"
                     value={targetIdInput}
                     onChange={(event) => setTargetIdInput(event.target.value)}
                   />
@@ -823,10 +824,8 @@ function App() {
                   Default desktop: {virtualDesktopSummary || "No virtual desktops detected"}
                 </div>
                 <div style={styles.targetPreviewRow}>
-                  <span style={styles.previewLabel}>MCP call:</span>
-                  <code style={styles.previewCode}>
-                    spawn_window {`{ "target": "${selectedTargetPreview}" }`}
-                  </code>
+                  <span style={styles.previewLabel}>Ask your agent:</span>
+                  <code style={styles.previewCode}>open {selectedTargetPreview}</code>
                 </div>
                 <button style={{ ...styles.btn, marginTop: 12 }} onClick={saveSpawnTarget}>
                   {editingTargetId ? "Update Target" : "Save Target"}
@@ -848,9 +847,7 @@ function App() {
                         {target.desktop ? (
                           <div style={styles.targetMeta}>Default desktop: {target.desktop}</div>
                         ) : null}
-                        <code style={styles.targetMcpCall}>
-                          spawn_window {`{ "target": "${target.id}" }`}
-                        </code>
+                        <div style={styles.targetMcpCall}>Ask your agent: open {target.id}</div>
                       </div>
                       <div style={styles.targetActions}>
                         <button style={styles.secondaryBtn} onClick={() => spawnSavedTarget(target)}>
@@ -948,13 +945,6 @@ const styles: Record<string, React.CSSProperties> = {
     color: "#b8b8b8",
     fontSize: "12px",
     lineHeight: 1.5,
-  },
-  helpCode: {
-    display: "block",
-    marginTop: "4px",
-    color: "#9fd0ff",
-    fontSize: "12px",
-    whiteSpace: "pre-wrap",
   },
   spawnSection: {
     marginTop: "20px",
