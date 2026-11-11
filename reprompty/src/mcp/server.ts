@@ -2,17 +2,20 @@
 /**
  * Reprompty MCP Server - Standalone stdio transport
  *
- * Run: npx tsx src/mcp/server.ts
- * Register: claude mcp add reprompty -- npx tsx path/to/server.ts
+ * Build: npm run build:mcp
+ * Run: node dist/mcp/server.js
  */
 
-// Some MCP clients (e.g. Kimi Code: CLI) spawn the server with a sanitized
+import "./stdio-guard.js";
+
+// Some MCP clients (e.g. Kimi Code CLI) spawn the server with a sanitized
 // environment that strips graphical session variables. Restore them before
 // any platform code runs.
 import { ensureLinuxSessionEnv } from "../platform/linux.js";
 ensureLinuxSessionEnv();
 
 import { getTools, callTool } from "./index.js";
+import { appVersion } from "../core/resources.js";
 import {
   getCurrentDesktopUuid,
   setCurrentDesktopUuid,
@@ -111,7 +114,7 @@ async function handleMessage(msg: { id?: string | number; method?: string; param
         },
         serverInfo: {
           name: "reprompty",
-          version: "0.2.0",
+          version: appVersion(),
         },
       });
       break;
@@ -159,13 +162,6 @@ async function handleMessage(msg: { id?: string | number; method?: string; param
       }
   }
 }
-
-// Log to stderr (not stdout which is for JSON-RPC)
-console.log = (...args: unknown[]) => {
-  process.stderr.write(args.map(String).join(" ") + "\n");
-};
-console.error = console.log;
-console.warn = console.log;
 
 console.log("[Reprompty MCP] Server started on stdio");
 console.log("[Reprompty MCP] Tools:", getTools().map((t) => t.name).join(", "));

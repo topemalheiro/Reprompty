@@ -6,6 +6,7 @@ export default function PortainerTab() {
   const [error, setError] = useState<string | null>(null);
   const [graphitiRunning, setGraphitiRunning] = useState(false);
   const [graphitiMessage, setGraphitiMessage] = useState("");
+  const [graphitiDir, setGraphitiDir] = useState<string | null>(null);
 
   useEffect(() => {
     const webview = webviewRef.current;
@@ -47,9 +48,26 @@ export default function PortainerTab() {
     try {
       const s = await window.electronAPI.graphitiStatus();
       setGraphitiRunning(s.running);
+      setGraphitiDir(s.composeDir ?? null);
     } catch {
       setGraphitiRunning(false);
     }
+  };
+
+  const handleGraphitiChooseFolder = async () => {
+    try {
+      const dir = await window.electronAPI.pickPath({
+        directory: true,
+        title: "Choose the folder with Graphiti's docker compose file",
+        defaultPath: graphitiDir || undefined,
+      });
+      if (!dir) return;
+      const result = await window.electronAPI.setGraphitiComposeDir(dir);
+      setGraphitiMessage(result.success ? "" : result.error || "Could not use that folder");
+    } catch (err) {
+      setGraphitiMessage(`Error: ${err}`);
+    }
+    checkGraphitiStatus();
   };
 
   const handleGraphitiStart = async () => {
@@ -123,12 +141,22 @@ export default function PortainerTab() {
           <span style={styles.serviceStatus}>
             {graphitiRunning ? "running" : "stopped"}
           </span>
+          <span style={styles.serviceFolder} title={graphitiDir || undefined}>
+            {graphitiDir || "No docker compose folder chosen"}
+          </span>
           {graphitiMessage && (
             <span style={styles.serviceMessage}>{graphitiMessage}</span>
           )}
         </div>
         <div style={styles.serviceBarRight}>
-          <button style={styles.btn} onClick={handleGraphitiStart} disabled={graphitiRunning}>
+          <button style={styles.secondaryBtn} onClick={handleGraphitiChooseFolder}>
+            Choose folder
+          </button>
+          <button
+            style={styles.btn}
+            onClick={handleGraphitiStart}
+            disabled={graphitiRunning || !graphitiDir}
+          >
             Start
           </button>
           <button style={styles.secondaryBtn} onClick={handleGraphitiStop} disabled={!graphitiRunning}>
@@ -254,6 +282,15 @@ const styles: Record<string, React.CSSProperties> = {
   serviceStatus: {
     fontSize: "12px",
     color: "#888",
+  },
+  serviceFolder: {
+    fontSize: "11px",
+    color: "#777",
+    fontFamily: "monospace",
+    maxWidth: "320px",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
   },
   serviceMessage: {
     fontSize: "11px",
