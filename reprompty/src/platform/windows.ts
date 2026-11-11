@@ -9,6 +9,16 @@ import {
 import {
   getWindowDesktopAssignments,
 } from "../core/virtual-desktop-manager.js";
+import {
+  EDITOR_TITLE_SUFFIXES,
+  workspaceNameFromTitle,
+} from "../core/editor-titles.js";
+import { findFolderByName } from "../core/folder-lookup.js";
+import { readSettings } from "../core/settings.js";
+import { getCdpPort } from "../core/vscode-paths.js";
+import { findExecutable } from "../core/which.js";
+
+export { getCdpPort };
 
 export interface WindowInfo {
   pid: number;
@@ -17,7 +27,7 @@ export interface WindowInfo {
   processName?: string;
 }
 
-const VS_CODE_PROCESS_NAMES = new Set(["code", "code.real"]);
+const VS_CODE_PROCESS_NAMES = new Set(["code", "code.real", "code - insiders", "vscodium"]);
 const KILO_CODE_PROCESS_NAMES = new Set(["kilocode"]);
 const KIMI_CODE_PROCESS_NAMES = new Set(["kimi-code"]);
 const SUPPORTED_EDITOR_PROCESS_NAMES = new Set([
@@ -111,6 +121,36 @@ export function resolveDetectedWindowProcessName(
   return trimmedProcessName || fallbackProcessNameFromTitle(title);
 }
 
+function escapePowerShellSingleQuotes(value: string): string {
+  return value.replace(/'/g, "''");
+}
+
+// The BOM makes Windows PowerShell 5.1 read the script as UTF-8, not the ANSI code page.
+function writePowerShellScript(file: string, script: string): void {
+  fs.writeFileSync(file, `\uFEFF${script}`, "utf-8");
+}
+
+/** VS Code's code.cmd: PATH first, then the usual install folders. */
+export function findCodeCmd(): string | null {
+  const fromPath = findExecutable("code");
+  if (fromPath) return fromPath;
+
+  const env = process.env;
+  const installs: Array<[string | undefined, ...string[]]> = [
+    [env.LOCALAPPDATA, "Programs", "Microsoft VS Code", "bin", "code.cmd"],
+    [env.ProgramFiles, "Microsoft VS Code", "bin", "code.cmd"],
+    [env.LOCALAPPDATA, "Programs", "Microsoft VS Code Insiders", "bin", "code-insiders.cmd"],
+    [env.ProgramFiles, "Microsoft VS Code Insiders", "bin", "code-insiders.cmd"],
+    [env.USERPROFILE, "scoop", "apps", "vscode", "current", "bin", "code.cmd"],
+  ];
+  for (const [base, ...rest] of installs) {
+    if (!base) continue;
+    const candidate = nodePath.join(base, ...rest);
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
 /**
  * Spawn a new VS Code window using the CLI
  */
@@ -121,21 +161,18 @@ export function spawnWindow(
 ): Promise<{ success: boolean; pid?: number; message: string; desktop?: string }> {
   return (async () => {
     try {
-      const codePath = nodePath.join(
-        process.env.LOCALAPPDATA || "",
-        "Programs",
-        "Microsoft VS Code",
-        "bin",
-        "code.cmd"
-      );
-
-      if (!fs.existsSync(codePath)) {
-        return { success: false, message: `code.cmd not found at: ${codePath}` };
+      const codePath = findCodeCmd();
+      if (!codePath) {
+        return {
+          success: false,
+          message: "code.cmd not found. Install VS Code or add its bin folder to PATH.",
+        };
       }
 
+      const port = readSettings().cdpPort ?? 9222;
       const result = execSync(
-        `powershell.exe -NoProfile -Command "& '${codePath}' --remote-debugging-port=9222 -n '${folderPath}'"`,
-        { encoding: "utf-8", timeout: 15000, stdio: ["pipe", "pipe", "pipe"] }
+        `powershell.exe -NoProfile -Command "& '${escapePowerShellSingleQuotes(codePath)}' --remote-debugging-port=${port} -n '${escapePowerShellSingleQuotes(folderPath)}'"`,
+        { encoding: "utf-8", timeout: 15000, stdio: ["pipe", "pipe", "pipe"], windowsHide: true }
       ).trim();
 
       return {
@@ -199,6 +236,7 @@ export function findWindowByTitle(windowTitle: string): WindowInfo | null {
 
     const result = execSync(`powershell -Command "${script.replace(/"/g, '\\"').replace(/\n/g, " ")}"`, {
       encoding: "utf-8",
+      windowsHide: true,
     }).trim();
 
     if (!result) return null;
@@ -237,7 +275,7 @@ export function listWindows(): WindowInfo[] {
     // Get all supported editor processes.
     const result = execSync(
       'powershell -Command "Get-Process -Name Code,Code.real,kilocode -ErrorAction SilentlyContinue | Select-Object Id,ProcessName | ConvertTo-Json"',
-      { encoding: "utf-8" }
+      { encoding: "utf-8", windowsHide: true }
     );
 
     const processes = JSON.parse(result || "[]");
@@ -322,11 +360,11 @@ if ($original -ne [IntPtr]::Zero -and $original -ne [IntPtr]$Handle) {
 Write-Output "sent"
 `;
 
-    fs.writeFileSync(ps1File, script, "utf-8");
+    writePowerShellScript(ps1File, script);
 
     const result = execSync(
       `powershell -NoProfile -ExecutionPolicy Bypass -File "${ps1File}"`,
-      { encoding: "utf-8", timeout: 10000 }
+      { encoding: "utf-8", timeout: 10000, windowsHide: true }
     ).trim();
 
     // Clean up ps1 file
@@ -352,12 +390,11 @@ export async function executeCommandForeground(
 }
 
 /**
- * Stub for getWorkspacePathFromPid on Windows.
- * Not yet implemented — returns null.
+ * Resolve the folder of a VS Code window from the folder named in its title.
  */
-export function getWorkspacePathFromPid(_pid: number): string | null {
-  console.warn("[getWorkspacePathFromPid] Not implemented on Windows");
-  return null;
+export function getWorkspacePathFromPid(_pid: number, windowTitle?: string): string | null {
+  const name = windowTitle ? workspaceNameFromTitle(windowTitle) : null;
+  return name ? findFolderByName(name) : null;
 }
 
 // ============================================================================
@@ -378,6 +415,8 @@ export interface DetectedWindow {
   backgroundRoute: "ipc-kilo" | "cdp-kilo" | "cdp-claude" | "cdp-codex" | "cdp-kimi" | "foreground";
   pipePath: string | null;
   sendMethod: "background" | "foreground";
+  /** KDE Wayland kdotool UUID handle (if available) */
+  kdotoolHandle?: string;
 }
 
 export function resolveBackgroundRoute(
@@ -400,7 +439,7 @@ export function resolveBackgroundRoute(
   if (activeAgent === "claude-code" && availableAgents.includes("claude-code")) {
     return "cdp-claude";
   }
-  // When agent is unknown, prefer Kilo Code: as the "start with" agent
+  // When agent is unknown, prefer Kilo Code as the "start with" agent
   if (activeAgent === "unknown" && availableAgents.includes("kilo-code")) {
     return "cdp-kilo";
   }
@@ -424,8 +463,10 @@ export async function detectWindows(_options: { force?: boolean } = {}): Promise
     const tempDir = getWritableTempDir();
     const ps1File = nodePath.join(tempDir, "reprompty-detect.ps1");
     const tempDirEscaped = tempDir.replace(/\\/g, "\\\\").replace(/'/g, "''");
+    const titleFilter = EDITOR_TITLE_SUFFIXES.map((suffix) => `$title -like "*${suffix}*"`).join(" -or ");
 
     const script = `
+try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 $env:TEMP = '${tempDirEscaped}'
 $env:TMP = '${tempDirEscaped}'
 Add-Type @"
@@ -455,7 +496,7 @@ $callback = [WinDetect+EnumWindowsProc]{
   $sb = New-Object System.Text.StringBuilder($length + 1)
   [WinDetect]::GetWindowText($hWnd, $sb, $sb.Capacity) | Out-Null
   $title = $sb.ToString()
-  if ($title -like "*Visual Studio Code*" -or $title -like "*Kilo Code*" -or $title -like "*Kimi Code*") {
+  if (${titleFilter}) {
     $wpid = [uint32]0
     [WinDetect]::GetWindowThreadProcessId($hWnd, [ref]$wpid) | Out-Null
     $handleInt = $hWnd.ToInt64()
@@ -473,11 +514,11 @@ $callback = [WinDetect+EnumWindowsProc]{
 $results | ForEach-Object { Write-Output $_ }
 `;
 
-    fs.writeFileSync(ps1File, script, "utf-8");
+    writePowerShellScript(ps1File, script);
 
     const raw = execSync(
       `powershell -NoProfile -ExecutionPolicy Bypass -File "${ps1File}"`,
-      { encoding: "utf-8", timeout: 10000 }
+      { encoding: "utf-8", timeout: 10000, windowsHide: true }
     ).trim();
 
     if (!raw) return [];
@@ -514,7 +555,7 @@ $results | ForEach-Object { Write-Output $_ }
       }
 
       // Extract folder from title: "folder - Visual Studio Code" or "folder - Kilo Code" or "folder - Kimi Code"
-      const titleMatch = title.match(/^(.+?)\s+-\s+(Visual Studio Code|Kilo Code|Kimi Code)/);
+      const titleMatch = title.match(/^(.+?)\s+-\s+(Visual Studio Code|Kilo Code|Kimi Code|VSCodium|Code - OSS)/);
       const folderPath = titleMatch ? titleMatch[1].trim() : "";
       const processName = resolveDetectedWindowProcessName(rawProcessName, title);
       const normalizedProcessName = normalizeEditorProcessName(processName);
@@ -589,6 +630,7 @@ export function detectAllWindows(): AllWindowInfo[] {
     const tempDirEscaped = tempDir.replace(/\\/g, "\\\\").replace(/'/g, "''");
 
     const script = `
+try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 $env:TEMP = '${tempDirEscaped}'
 $env:TMP = '${tempDirEscaped}'
 Add-Type @"
@@ -633,11 +675,11 @@ $callback = [WinDetectAll+EnumWindowsProc]{
 $results | ForEach-Object { Write-Output $_ }
 `;
 
-    fs.writeFileSync(ps1File, script, "utf-8");
+    writePowerShellScript(ps1File, script);
 
     const raw = execSync(
       `powershell -NoProfile -ExecutionPolicy Bypass -File "${ps1File}"`,
-      { encoding: "utf-8", timeout: 10000 }
+      { encoding: "utf-8", timeout: 10000, windowsHide: true }
     ).trim();
 
     if (!raw) return [];
@@ -667,48 +709,4 @@ $results | ForEach-Object { Write-Output $_ }
   }
 
   return windows;
-}
-
-function parseArgvJson(portFile: string): number | null {
-  try {
-    if (!fs.existsSync(portFile)) return null;
-    const raw = fs.readFileSync(portFile, "utf-8");
-    const parsed = JSON.parse(raw);
-    const port = parsed["remote-debugging-port"];
-    if (typeof port === "number" || typeof port === "string") {
-      const n = parseInt(String(port), 10);
-      if (!isNaN(n)) return n;
-    }
-  } catch {
-    // Ignore parse errors
-  }
-  return null;
-}
-
-/**
- * Get the CDP (Chrome DevTools Protocol) port from VS Code:'s DevToolsActivePort file.
- * Falls back to parsing %APPDATA%\Code:\argv.json for "remote-debugging-port".
- * Returns null if not available.
- */
-export function getCdpPort(): number | null {
-  try {
-    const appData = process.env.APPDATA;
-    if (!appData) return null;
-
-    const portFile = nodePath.join(appData, "Code", "DevToolsActivePort");
-    if (fs.existsSync(portFile)) {
-      const content = fs.readFileSync(portFile, "utf-8").trim();
-      const port = parseInt(content.split("\n")[0], 10);
-      if (!isNaN(port)) return port;
-    }
-
-    // Fallback to argv.json
-    const argvFile = nodePath.join(appData, "Code", "argv.json");
-    const port = parseArgvJson(argvFile);
-    if (port !== null) return port;
-
-    return null;
-  } catch {
-    return null;
-  }
 }

@@ -1,6 +1,13 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { spawnWindow, detectWindows } from "../platform/index.js";
+import {
+  spawnWindow,
+  detectWindows,
+  isSupportedEditorProcessName,
+  normalizeEditorProcessName,
+} from "../platform/index.js";
+import { isEditorWindowTitle, workspaceNameFromTitle } from "./editor-titles.js";
+import { findFolderByName } from "./folder-lookup.js";
 import {
   listVirtualDesktops,
   ensureVirtualDesktop,
@@ -52,77 +59,31 @@ export interface LoadPresetResult {
   errors: string[];
 }
 
-/**
- * Parse a VS Code: window title to extract the folder name.
- * Examples:
- *   "Welcome - kilocode-legacy - Visual Studio Code:"
- *   "main.ts - KDE-Plasma-on-Wayland - Visual Studio Code:"
- */
-function parseFolderFromWindowTitle(title: string): string | null {
-  // Match "... - FolderName - Visual Studio Code:" or "FolderName - Visual Studio Code:"
-  const match = title.match(/(?:^|.*?\s-\s)([^\-]+?)\s+-\s+Visual Studio Code:/);
-  if (match) {
-    return match[1].trim();
+/** VS Code-family windows, by process name ("Code" on Windows) or by title. */
+export function isPresetEditorWindow(window: { processName: string; title: string }): boolean {
+  return (
+    isSupportedEditorProcessName(normalizeEditorProcessName(window.processName)) ||
+    isEditorWindowTitle(window.title)
+  );
+}
+
+function isDirectory(dir: string): boolean {
+  try {
+    return fs.statSync(dir).isDirectory();
+  } catch {
+    return false;
   }
-  // Also try "FolderName - Code:" (insiders, codium variants)
-  const match2 = title.match(/(?:^|.*?\s-\s)([^\-]+?)\s+-\s+(?:Visual Studio )?Code:/i);
-  if (match2) {
-    return match2[1].trim();
-  }
-  return null;
 }
 
 /**
- * Detect the full folder path for a VS Code: window by matching title against known projects.
+ * The folder a window shows. Detection fills folderPath with the title text
+ * before the editor name, so the folder is usually looked up by its name.
  */
-async function resolveFolderPath(
-  title: string,
-  pid: number
-): Promise<string | null> {
-  const folderName = parseFolderFromWindowTitle(title);
-  if (!folderName) return null;
-
-  // Try to get cwd from /proc/{pid}/cwd on Linux
-  try {
-    const cwd = fs.readlinkSync(`/proc/${pid}/cwd`);
-    if (cwd && path.basename(cwd) === folderName) {
-      return cwd;
-    }
-  } catch {
-    // ignore
-  }
-
-  // Fallback: search common project directories
-  const searchRoots = [
-    path.join(process.env.HOME || ".", "Projects"),
-    path.join(process.env.HOME || ".", "projects"),
-    path.join(process.env.HOME || "."),
-  ];
-  for (const root of searchRoots) {
-    if (!fs.existsSync(root)) continue;
-    const candidates = fs.readdirSync(root, { withFileTypes: true });
-    for (const entry of candidates) {
-      if (entry.isDirectory() && entry.name === folderName) {
-        return path.join(root, entry.name);
-      }
-      // Also check one level deeper (e.g., OS-Toolkit/Reprompty)
-      if (entry.isDirectory()) {
-        const subPath = path.join(root, entry.name);
-        try {
-          const subEntries = fs.readdirSync(subPath, { withFileTypes: true });
-          for (const sub of subEntries) {
-            if (sub.isDirectory() && sub.name === folderName) {
-              return path.join(subPath, sub.name);
-            }
-          }
-        } catch {
-          // ignore
-        }
-      }
-    }
-  }
-
-  return null;
+export function resolvePresetFolder(window: { folderPath?: string; title: string }): string | null {
+  const detected = window.folderPath ?? "";
+  if (path.isAbsolute(detected) && isDirectory(detected)) return detected;
+  const folderName = workspaceNameFromTitle(window.title);
+  return folderName ? findFolderByName(folderName) : null;
 }
 
 export async function saveTaskPreset(name: string): Promise<SavePresetResult> {
@@ -139,10 +100,10 @@ export async function saveTaskPreset(name: string): Promise<SavePresetResult> {
 
     const presetWindows: PresetWindow[] = [];
     for (const w of windows) {
-      if (w.processName !== "code" && !w.title.includes("Visual Studio Code:")) {
+      if (!isPresetEditorWindow(w)) {
         continue;
       }
-      const folderPath = w.folderPath || (await resolveFolderPath(w.title, w.pid));
+      const folderPath = resolvePresetFolder(w);
       if (!folderPath) continue;
 
       presetWindows.push({
@@ -197,18 +158,14 @@ export async function loadTaskPreset(name: string): Promise<LoadPresetResult> {
       }
     }
 
-    // Detect currently open VS Code: windows to avoid duplicates
-    const currentWindows = await detectWindows();
-    const openFolders = new Set(
-      currentWindows
-        .filter((w) => w.processName === "code" || w.title.includes("Visual Studio Code:"))
-        .map((w) => w.folderPath)
-        .filter(Boolean)
-    );
+    // Detect currently open VS Code windows to avoid duplicates
+    const openWindows = (await detectWindows()).filter(isPresetEditorWindow);
+    const openFolders = new Set(openWindows.map((w) => w.folderPath).filter(Boolean));
+    const openNames = new Set(openWindows.map((w) => workspaceNameFromTitle(w.title)).filter(Boolean));
 
     // Spawn missing windows
     for (const w of preset.windows) {
-      if (openFolders.has(w.folderPath)) {
+      if (openFolders.has(w.folderPath) || openNames.has(path.basename(w.folderPath))) {
         continue; // already open
       }
 

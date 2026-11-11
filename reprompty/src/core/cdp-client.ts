@@ -1,5 +1,6 @@
 import http from "node:http";
 import WebSocketLib from "ws";
+import { stripEditorSuffix } from "./editor-titles.js";
 
 const WS = WebSocketLib;
 
@@ -58,16 +59,6 @@ function uniqueAgents(agents: AgentKind[]): AgentKind[] {
   return Array.from(
     new Set(agents.filter((agent): agent is Exclude<AgentKind, "unknown"> => agent !== "unknown"))
   );
-}
-
-function stripEditorSuffix(title: string): string {
-  return title
-    .replace(/\s+-\s+Visual Studio Code.*$/i, "")
-    .replace(/\s+-\s+Kilo Code.*$/i, "")
-    .replace(/\s+-\s+Kimi Code.*$/i, "")
-    .replace(/\s+-\s+VSCodium.*$/i, "")
-    .replace(/\s+-\s+Code:\s+-\s+OSS.*$/i, "")
-    .trim();
 }
 
 function windowTitleScore(candidateTitle: string, windowTitle: string): number {
