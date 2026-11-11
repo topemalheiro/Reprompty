@@ -40,12 +40,26 @@ interface ScriptsTabProps {
   setStatus: (status: string) => void;
 }
 
-const SCRIPT_TYPES = [
-  { value: "powershell", label: "PowerShell (.ps1)" },
-  { value: "batch", label: "Batch (.bat/.cmd)" },
-  { value: "vbs", label: "VBScript (.vbs)" },
-  { value: "executable", label: "Executable (.exe)" },
-];
+const isWindows = window.electronAPI?.platform === "win32";
+
+// Run as in script-manager.ts; outside Windows, .ps1 files use pwsh.
+const SCRIPT_TYPES = isWindows
+  ? [
+      { value: "powershell", label: "PowerShell (.ps1)" },
+      { value: "batch", label: "Batch (.bat/.cmd)" },
+      { value: "vbs", label: "VBScript (.vbs)" },
+      { value: "executable", label: "Executable (.exe)" },
+      { value: "shell", label: "Shell (.sh)" },
+      { value: "python", label: "Python (.py)" },
+    ]
+  : [
+      { value: "shell", label: "Shell (.sh)" },
+      { value: "python", label: "Python (.py)" },
+      { value: "pwsh", label: "PowerShell (.ps1)" },
+      { value: "executable", label: "Executable" },
+    ];
+
+const DEFAULT_SCRIPT_TYPE = isWindows ? "powershell" : "shell";
 
 const BUILT_IN_MCP_TOOLS = [
   {
@@ -62,7 +76,7 @@ const BUILT_IN_MCP_TOOLS = [
   },
   {
     name: "list_virtual_desktops",
-    description: "List the current Windows virtual desktops and their names.",
+    description: "List your virtual desktops and their names.",
   },
   {
     name: "ensure_virtual_desktop",
@@ -78,7 +92,7 @@ const BUILT_IN_MCP_TOOLS = [
   },
   {
     name: "duplicate_workspace_in_new_window",
-    description: "Duplicate the current workspace as a new VS Code: window. Optionally apply a layout slot.",
+    description: "Open the current workspace again in a new VS Code window. Optionally apply a layout slot.",
   },
 ];
 
@@ -86,7 +100,7 @@ function detectTypeFromPath(filePath: string): string {
   const ext = filePath.split(".").pop()?.toLowerCase() || "";
   switch (ext) {
     case "ps1":
-      return "powershell";
+      return isWindows ? "powershell" : "pwsh";
     case "bat":
     case "cmd":
       return "batch";
@@ -94,8 +108,12 @@ function detectTypeFromPath(filePath: string): string {
       return "vbs";
     case "exe":
       return "executable";
+    case "sh":
+      return "shell";
+    case "py":
+      return "python";
     default:
-      return "powershell";
+      return DEFAULT_SCRIPT_TYPE;
   }
 }
 
@@ -115,7 +133,12 @@ function statusColor(status: string): string {
 function typeBadgeColor(type: string): string {
   switch (type) {
     case "powershell":
+    case "pwsh":
       return "#5391d9";
+    case "shell":
+      return "#4ec9b0";
+    case "python":
+      return "#d9c653";
     case "batch":
       return "#c0c0c0";
     case "vbs":
@@ -144,7 +167,7 @@ export default function ScriptsTab({ setStatus }: ScriptsTabProps) {
   const [addingScript, setAddingScript] = useState(false);
   const [newName, setNewName] = useState("");
   const [newPath, setNewPath] = useState("");
-  const [newType, setNewType] = useState("powershell");
+  const [newType, setNewType] = useState(DEFAULT_SCRIPT_TYPE);
   const [newArgs, setNewArgs] = useState("");
   const [outputMap, setOutputMap] = useState<Record<string, string[]>>({});
   const outputRefs = useRef<Record<string, HTMLPreElement | null>>({});
@@ -276,7 +299,7 @@ export default function ScriptsTab({ setStatus }: ScriptsTabProps) {
       const savedName = newName;
       setNewName("");
       setNewPath("");
-      setNewType("powershell");
+      setNewType(DEFAULT_SCRIPT_TYPE);
       setNewArgs("");
       setAddingScript(false);
       setStatus(`Script "${savedName}" added`);
