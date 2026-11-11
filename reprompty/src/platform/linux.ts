@@ -9,6 +9,17 @@ import {
 import {
   getWindowDesktopAssignments,
 } from "../core/virtual-desktop-manager.js";
+import {
+  EDITOR_TITLE_SUFFIXES,
+  isEditorWindowTitle,
+  workspaceNameFromTitle,
+} from "../core/editor-titles.js";
+import { findFolderByName } from "../core/folder-lookup.js";
+import { readSettings } from "../core/settings.js";
+import { getCdpPort } from "../core/vscode-paths.js";
+import { findExecutable, findKdotool } from "../core/which.js";
+
+export { getCdpPort };
 
 export interface WindowInfo {
   pid: number;
@@ -19,7 +30,7 @@ export interface WindowInfo {
   kdotoolHandle?: string;
 }
 
-const VS_CODE_PROCESS_NAMES = new Set(["code", "code-oss", "vscodium", "codium"]);
+const VS_CODE_PROCESS_NAMES = new Set(["code", "code-oss", "code-insiders", "vscodium", "codium"]);
 const KILO_CODE_PROCESS_NAMES = new Set(["kilocode"]);
 const KIMI_CODE_PROCESS_NAMES = new Set(["kimi-code"]);
 const SUPPORTED_EDITOR_PROCESS_NAMES = new Set([
@@ -28,18 +39,10 @@ const SUPPORTED_EDITOR_PROCESS_NAMES = new Set([
   ...KIMI_CODE_PROCESS_NAMES,
 ]);
 
-/** Known editor window title substrings for detection */
-const EDITOR_TITLE_SUBSTRINGS = [
-  "Visual Studio Code",
-  "Kilo Code",
-  "Kimi Code",
-  "VSCodium",
-  "Code: - OSS",
-];
-
-function isEditorWindowTitle(title: string): boolean {
-  return EDITOR_TITLE_SUBSTRINGS.some((substring) => title.includes(substring));
-}
+// kdotool matches titles as a regex, so "Visual Studio Code" also finds Insiders.
+const KDOTOOL_TITLE_SEARCH_TERMS = EDITOR_TITLE_SUFFIXES.filter(
+  (suffix) => !EDITOR_TITLE_SUFFIXES.some((other) => other !== suffix && suffix.includes(other))
+);
 const KILO_PIPE_PREFIXES = ["kilo-ipc-", "kilo-code-", "roo-code-"];
 
 /**
@@ -47,6 +50,7 @@ const KILO_PIPE_PREFIXES = ["kilo-ipc-", "kilo-code-", "roo-code-"];
  * or MCP client spawns. Critical for kdotool / KWin / D-Bus to work.
  */
 export function ensureLinuxSessionEnv(): void {
+  if (process.platform !== "linux") return;
   const uid = process.getuid?.() ?? 0;
 
   if (!process.env.XDG_RUNTIME_DIR) {
@@ -97,30 +101,14 @@ function isWaylandSession(): boolean {
 }
 
 function getKdotoolPath(): string {
-  // Prefer PATH, fall back to the common local install location.
-  const fromPath = process.env.PATH?.split(nodePath.delimiter)
-    .map((dir) => nodePath.join(dir, "kdotool"))
-    .find((p) => {
-      try {
-        fs.accessSync(p, fs.constants.X_OK);
-        return true;
-      } catch {
-        return false;
-      }
-    });
-  return fromPath || nodePath.join(process.env.HOME || "", ".local", "bin", "kdotool");
+  return findKdotool() ?? "kdotool";
 }
 
 // Apply immediately so the rest of the module (and importers) get a working env.
 ensureLinuxSessionEnv();
 
 function hasKdotool(): boolean {
-  try {
-    fs.accessSync(getKdotoolPath(), fs.constants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
+  return findKdotool() !== null;
 }
 
 // Per-PID kdotool handle cache to avoid repeatedly querying KWin for the
@@ -151,7 +139,7 @@ function listWindowsKdotool(): Array<{ pid: number; title: string; processName: 
   const results: Array<{ pid: number; title: string; processName: string; handle: string }> = [];
   const seenHandles = new Set<string>();
 
-  for (const term of EDITOR_TITLE_SUBSTRINGS) {
+  for (const term of KDOTOOL_TITLE_SEARCH_TERMS) {
     try {
       const output = execSync(
         `"${kdotoolPath}" search --title ${JSON.stringify(term)} --limit 0`,
@@ -187,7 +175,7 @@ function listWindowsKdotool(): Array<{ pid: number; title: string; processName: 
           }
 
           // Intentionally not deduping by PID here: a single process may own
-          // multiple editor windows (e.g. VS Code: with multiple folders open).
+          // multiple editor windows (e.g. VS Code with multiple folders open).
 
           let processName = "";
           if (pid) {
@@ -347,6 +335,10 @@ export function resolveDetectedWindowProcessName(
   return trimmedProcessName || fallbackProcessNameFromTitle(title);
 }
 
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
 /**
  * Spawn a new VS Code window using the CLI
  */
@@ -357,13 +349,7 @@ export function spawnWindow(
 ): Promise<{ success: boolean; pid?: number; message: string; desktop?: string }> {
   return (async () => {
     try {
-      // Find code executable in PATH
-      let codePath: string | null = null;
-      try {
-        codePath = execSync("which code", { encoding: "utf-8", timeout: 5000 }).trim();
-      } catch {
-        codePath = null;
-      }
+      let codePath = findExecutable(["code", "code-oss", "codium", "code-insiders"]);
 
       if (!codePath) {
         // Try common locations
@@ -389,14 +375,15 @@ export function spawnWindow(
         return { success: false, message: "code executable not found in PATH" };
       }
 
+      const port = readSettings().cdpPort ?? 9222;
       const result = execSync(
-        `\"${codePath}\" --remote-debugging-port=9222 -n \"${folderPath}\" &`,
+        `${shellQuote(codePath)} --remote-debugging-port=${port} -n ${shellQuote(folderPath)} &`,
         { encoding: "utf-8", timeout: 15000, stdio: ["pipe", "pipe", "pipe"] }
       ).trim();
 
       return {
         success: true,
-        message: `Spawned VS Code: window for ${folderPath}${result ? ` (${result})` : ""}`,
+        message: `Spawned VS Code window for ${folderPath}${result ? ` (${result})` : ""}`,
       };
     } catch (error: any) {
       const stderr = error.stderr ? String(error.stderr).trim() : "";
@@ -410,7 +397,7 @@ export function spawnWindow(
 }
 
 /**
- * Find a VS Code: window by title.
+ * Find a VS Code window by title.
  * On Wayland falls back to process-based matching since xdotool does not work
  * for native Wayland windows.
  */
@@ -529,7 +516,7 @@ function listEditorProcesses(): Array<{ pid: number; processName: string; title:
       }
 
       // Build a synthetic title similar to X11 window titles
-      const displayTitle = title ? `${nodePath.basename(title)} - Visual Studio Code:` : "Visual Studio Code:";
+      const displayTitle = title ? `${nodePath.basename(title)} - Visual Studio Code` : "Visual Studio Code";
 
       seenPids.add(pid);
       results.push({
@@ -546,7 +533,7 @@ function listEditorProcesses(): Array<{ pid: number; processName: string; title:
 }
 
 /**
- * List all VS Code: / Kilo Code windows
+ * List all VS Code / Kilo Code windows
  */
 export function listWindows(): WindowInfo[] {
   const windows: WindowInfo[] = [];
@@ -621,57 +608,17 @@ export function listWindows(): WindowInfo[] {
 }
 
 /**
- * Send a message to a window via foreground clipboard+key simulation.
- * On X11 uses xdotool. On Wayland uses kdotool windowactivate + wl-copy + wtype/ydotool.
- */
-/**
- * Extract workspace name from a VS Code: window title.
- * Titles look like "filename - WorkspaceName - Visual Studio Code:"
- * or "WorkspaceName - Visual Studio Code:".
- */
-function extractWorkspaceNameFromTitle(title: string): string | null {
-  const suffix = " - Visual Studio Code:";
-  if (!title.includes(suffix)) return null;
-  const withoutSuffix = title.slice(0, title.indexOf(suffix));
-  const lastDash = withoutSuffix.lastIndexOf(" - ");
-  if (lastDash === -1) return withoutSuffix.trim();
-  return withoutSuffix.slice(lastDash + 3).trim();
-}
-
-/**
- * Search common project directories for a folder matching the workspace name.
- */
-function findProjectPathByName(name: string): string | null {
-  const searchRoots = [
-    "/home/tope/Projects",
-    "/home/tope/Projects/OS-Toolkit",
-    "/home/tope/projects",
-    "/home/tope/dev",
-    "/home/tope/work",
-    process.cwd().replace(/\/[^\/]+$/, ""), // parent of current dir
-  ];
-  for (const root of searchRoots) {
-    if (!fs.existsSync(root)) continue;
-    const candidate = require("node:path").join(root, name);
-    if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) {
-      return candidate;
-    }
-  }
-  return null;
-}
-
-/**
- * Resolve the workspace/folder path for a VS Code: window.
- * First tries to extract the workspace name from the window title and
- * search common project directories. Falls back to /proc/<pid>/cmdline.
+ * Resolve the workspace/folder path for a VS Code window.
+ * First looks up the folder named in the window title, then falls back to
+ * /proc/<pid>/cmdline.
  */
 export function getWorkspacePathFromPid(pid: number, windowTitle?: string): string | null {
-  // Try title-based resolution first (needed because all VS Code: windows
+  // Try title-based resolution first (needed because all VS Code windows
   // on Linux share the same PID, so /proc/<pid>/cmdline is unreliable)
   if (windowTitle) {
-    const name = extractWorkspaceNameFromTitle(windowTitle);
+    const name = workspaceNameFromTitle(windowTitle);
     if (name) {
-      const path = findProjectPathByName(name);
+      const path = findFolderByName(name);
       if (path) return path;
     }
   }
@@ -696,7 +643,7 @@ export function getWorkspacePathFromPid(pid: number, windowTitle?: string): stri
 }
 
 /**
- * Execute a VS Code: command via the Command Palette using foreground key simulation.
+ * Execute a VS Code command via the Command Palette using foreground key simulation.
  * On Wayland uses kdotool windowactivate + wtype/ydotool.
  * On X11 uses xdotool.
  * @deprecated Use background methods (CLI spawn or CDP) instead.
@@ -795,6 +742,10 @@ echo "executed"
   }
 }
 
+/**
+ * Send a message to a window via foreground clipboard+key simulation.
+ * On X11 uses xdotool. On Wayland uses kdotool windowactivate + wl-copy + wtype/ydotool.
+ */
 export async function sendMessageForeground(
   windowHandle: number,
   message: string
@@ -958,7 +909,7 @@ export function resolveBackgroundRoute(
   if (activeAgent === "claude-code" && availableAgents.includes("claude-code")) {
     return "cdp-claude";
   }
-  // When agent is unknown, prefer Kilo Code: as the "start with" agent
+  // When agent is unknown, prefer Kilo Code as the "start with" agent
   if (activeAgent === "unknown" && availableAgents.includes("kilo-code")) {
     return "cdp-kilo";
   }
@@ -972,7 +923,7 @@ export function resolveBackgroundRoute(
 }
 
 /**
- * Auto-detect all VS Code: / Kilo Code windows with their capabilities.
+ * Auto-detect all VS Code / Kilo Code windows with their capabilities.
  * On Wayland falls back to process-based detection since wmctrl/xdotool
  * do not work for native Wayland windows.
  */
@@ -1060,7 +1011,7 @@ export async function detectWindows(options: { force?: boolean } = {}): Promise<
 
     if (rawProcessName && !isSupportedEditorProcessName(rawProcessName)) continue;
 
-    const titleMatch = title.match(/^(.+?)\s+-\s+(Visual Studio Code|Kilo Code|Kimi Code|VSCodium|Code: - OSS)/);
+    const titleMatch = title.match(/^(.+?)\s+-\s+(Visual Studio Code|Kilo Code|Kimi Code|VSCodium|Code - OSS)/);
     const folderPath = titleMatch ? titleMatch[1].trim() : "";
     const processName = resolveDetectedWindowProcessName(rawProcessName, title);
     const normalizedProcessName = normalizeEditorProcessName(processName);
@@ -1112,7 +1063,7 @@ export async function detectWindows(options: { force?: boolean } = {}): Promise<
       if (seenKdotoolHandles.has(win.handle)) continue;
       seenKdotoolHandles.add(win.handle);
 
-      const titleMatch = win.title.match(/^(.+?)\s+-\s+(Visual Studio Code|Kilo Code|Kimi Code|VSCodium|Code: - OSS)/);
+      const titleMatch = win.title.match(/^(.+?)\s+-\s+(Visual Studio Code|Kilo Code|Kimi Code|VSCodium|Code - OSS)/);
       const folderPath = titleMatch ? titleMatch[1].trim() : "";
       const isKilo = win.processName === "kilocode" || win.title.includes("Kilo Code");
       const isKimi = win.title.includes("Kimi Code");
@@ -1178,7 +1129,7 @@ export async function detectWindows(options: { force?: boolean } = {}): Promise<
       if (seen.has(proc.pid)) continue;
       seen.add(proc.pid);
 
-      const titleMatch = proc.title.match(/^(.+?)\s+-\s+(Visual Studio Code|Kilo Code|Kimi Code|VSCodium|Code: - OSS)/);
+      const titleMatch = proc.title.match(/^(.+?)\s+-\s+(Visual Studio Code|Kilo Code|Kimi Code|VSCodium|Code - OSS)/);
       const folderPath = titleMatch ? titleMatch[1].trim() : "";
       const isKilo = proc.processName === "kilocode" || proc.title.includes("Kilo Code") || proc.title.includes("Kimi Code");
       const pipePath = resolveKiloPipePath(proc.pid);
@@ -1218,22 +1169,6 @@ export async function detectWindows(options: { force?: boolean } = {}): Promise<
   lastDetectWindowsResult = results;
   lastDetectWindowsAt = Date.now();
   return results;
-}
-
-function parseArgvJson(portFile: string): number | null {
-  try {
-    if (!fs.existsSync(portFile)) return null;
-    const raw = fs.readFileSync(portFile, "utf-8");
-    const parsed = JSON.parse(raw);
-    const port = parsed["remote-debugging-port"];
-    if (typeof port === "number" || typeof port === "string") {
-      const n = parseInt(String(port), 10);
-      if (!isNaN(n)) return n;
-    }
-  } catch {
-    // Ignore parse errors
-  }
-  return null;
 }
 
 export interface AllWindowInfo {
@@ -1383,46 +1318,4 @@ export function detectAllWindows(): AllWindowInfo[] {
   }
 
   return windows;
-}
-
-/**
- * Get the CDP (Chrome DevTools Protocol) port from VS Code:'s DevToolsActivePort file.
- * Falls back to parsing ~/.vscode/argv.json for "remote-debugging-port".
- * Returns null if not available.
- */
-export function getCdpPort(): number | null {
-  try {
-    const homeDir = process.env.HOME;
-    if (!homeDir) return null;
-
-    // Try Code: first, then VSCodium
-    const candidates = [
-      nodePath.join(homeDir, ".config", "Code", "DevToolsActivePort"),
-      nodePath.join(homeDir, ".config", "VSCodium", "DevToolsActivePort"),
-      nodePath.join(homeDir, ".config", "Code - OSS", "DevToolsActivePort"),
-    ];
-
-    for (const portFile of candidates) {
-      if (!fs.existsSync(portFile)) continue;
-
-      const content = fs.readFileSync(portFile, "utf-8").trim();
-      const port = parseInt(content.split("\n")[0], 10);
-      if (!isNaN(port)) return port;
-    }
-
-    // Fallback to argv.json
-    const argvCandidates = [
-      nodePath.join(homeDir, ".vscode", "argv.json"),
-      nodePath.join(homeDir, ".config", "VSCodium", "argv.json"),
-      nodePath.join(homeDir, ".config", "Code - OSS", "argv.json"),
-    ];
-    for (const argvFile of argvCandidates) {
-      const port = parseArgvJson(argvFile);
-      if (port !== null) return port;
-    }
-
-    return null;
-  } catch {
-    return null;
-  }
 }
