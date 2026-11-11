@@ -14,9 +14,11 @@
     "dev": "vite",
     "build": "vite build",
     "build:mcp": "esbuild src/mcp/server.ts --bundle --platform=node --format=cjs --target=node18 --main-fields=module,main --outfile=dist/mcp/server.js --external:electron",
-    "build:all": "npm run build && npm run build:mcp",
+    "build:setup": "esbuild src/setup/cli-entry.ts --bundle --platform=node --format=cjs --target=node18 --main-fields=module,main --outfile=dist/setup/cli.js --external:electron",
+    "build:all": "npm run build && npm run build:mcp && npm run build:setup",
     "start": "node scripts/launch.cjs",
     "mcp": "node dist/mcp/server.js",
+    "setup": "npm run build:mcp && npm run build:setup && node dist/setup/cli.js",
     "test": "vitest run",
     "postinstall": "node scripts/check-electron.cjs"
   },
