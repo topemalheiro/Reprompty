@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/home/example/Projects"],
+      "alwaysAllow": ["read_file"],
+      "disabled": false
+    },
+    "reprompty": {
+      "command": "node",
+      "args": ["/home/example/old/server.js"],
+      "alwaysAllow": ["detect_windows", "list_virtual_desktops"],
+      "disabled": false
+    }
+  }
+}

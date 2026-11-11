@@ -1,0 +1,23 @@
+{
+  "numStartups": 42,
+  "theme": "dark",
+  "projects": {
+    "/home/example/Projects/demo": {
+      "allowedTools": [],
+      "mcpServers": {}
+    }
+  },
+  "mcpServers": {
+    "github": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-github"
+      ],
+      "env": {
+        "GITHUB_TOKEN_FILE": "/home/example/.config/github-token"
+      }
+    }
+  }
+}
