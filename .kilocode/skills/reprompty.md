@@ -1,1 +1,0 @@
-/home/user/Projects/OS-Toolkit/Reprompty/skills-reprompty/SKILL.md
