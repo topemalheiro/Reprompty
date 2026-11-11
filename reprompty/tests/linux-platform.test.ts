@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 import {
   buildKiloPipeCandidates,
   fallbackProcessNameFromTitle,
@@ -17,7 +17,7 @@ describe("linux detection helpers", () => {
     expect(normalizeEditorProcessName("kilocode")).toBe("kilocode");
   });
 
-  it("accepts Code, Code:-OSS, VSCodium, codium, kilocode, and kimi-code as supported editor processes", () => {
+  it("accepts Code, Code-OSS, VSCodium, codium, kilocode, and kimi-code as supported editor processes", () => {
     expect(isSupportedEditorProcessName("code")).toBe(true);
     expect(isSupportedEditorProcessName("code-oss")).toBe(true);
     expect(isSupportedEditorProcessName("vscodium")).toBe(true);
@@ -54,7 +54,7 @@ describe("linux detection helpers", () => {
     expect(resolveBackgroundRoute("claude-code", ["claude-code"], false)).toBe("cdp-claude");
   });
 
-  it("defaults unknown agent to cdp-kilo when Kilo Code: is available", () => {
+  it("defaults unknown agent to cdp-kilo when Kilo Code is available", () => {
     expect(resolveBackgroundRoute("unknown", ["kilo-code"], false)).toBe("cdp-kilo");
     expect(resolveBackgroundRoute("unknown", ["codex"], false)).toBe("cdp-codex");
     expect(resolveBackgroundRoute("unknown", ["kilo-code", "codex"], false)).toBe("cdp-kilo");
