@@ -1392,7 +1392,7 @@ export async function callTool(
           );
         }
         return textResult(
-          `CDP port not available for ${connection.name}. Ensure VS Code: is started with --remote-debugging-port=9222`,
+          "VS Code's debugging port is off. Turn it on in Reprompty → Setup (or run the setup command), then quit VS Code completely and reopen it.",
           true
         );
       }
@@ -1665,7 +1665,7 @@ export async function callTool(
       const port = getCdpPort();
       if (!port) {
         return textResult(
-          "CDP port not available. Ensure VS Code: is started with --remote-debugging-port=9222",
+          "VS Code's debugging port is off. Turn it on in Reprompty → Setup (or run the setup command), then quit VS Code completely and reopen it.",
           true
         );
       }
@@ -1810,6 +1810,7 @@ export async function callTool(
       const child = spawn("code", ["-n", openPath], {
         detached: true,
         stdio: "ignore",
+        windowsHide: true,
       });
       child.unref();
 
