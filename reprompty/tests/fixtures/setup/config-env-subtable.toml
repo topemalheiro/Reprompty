@@ -1,0 +1,12 @@
+[mcp_servers.reprompty]
+command = "/usr/bin/node"
+args = ["/home/example/old-checkout/reprompty/dist/mcp/server.js"]
+
+[mcp_servers.reprompty.env]
+ELECTRON_RUN_AS_NODE = "1"
+OLD_SETTING = "x"
+
+# Notes about the next server
+[mcp_servers.other]
+command = "other-mcp"
+args = ["--stdio"]
