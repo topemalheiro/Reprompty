@@ -1,0 +1,10 @@
+--- /usr/share/kwin/effects/cube/contents/ui/CubeCameraController.qml	2026-05-12 21:49:12.000000000 +0100
++++ /home/tope/.local/share/kwin/effects/cube/contents/ui/CubeCameraController.qml	2026-06-17 19:31:11.215391112 +0100
+@@ -33,6 +33,7 @@
+         id: dragHandler
+         target: null
+         acceptedModifiers: Qt.NoModifier
++        grabPermissions: PointerHandler.CanTakeOverFromAnything
+         onCentroidChanged: {
+             mouseMoved(Qt.vector2d(centroid.position.x, centroid.position.y), false);
+         }
