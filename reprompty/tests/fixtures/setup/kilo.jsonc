@@ -1,0 +1,15 @@
+{
+  "$schema": "https://app.kilo.ai/config.json",
+  // Providers I don't use
+  "disabled_providers": ["example-provider"],
+  "provider": {
+    "local": {
+      "name": "Local models", // served by llama.cpp
+      "options": { "baseURL": "http://127.0.0.1:8080/v1" }
+    }
+  },
+  /* Ask before running anything */
+  "permission": {
+    "bash": "ask"
+  }
+}
