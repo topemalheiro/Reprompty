@@ -1,0 +1,17 @@
+# Codex settings
+model = "gpt-5-codex"
+approval_policy = "on-request"
+
+[projects."/home/example/Projects/demo"]
+trust_level = "trusted"
+
+# Servers I use every day
+[mcp_servers.github]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-github"]
+
+[mcp_servers.github.env]
+GITHUB_TOKEN_FILE = "/home/example/.config/github-token"
+
+[features]
+web_search = true # keep this on
