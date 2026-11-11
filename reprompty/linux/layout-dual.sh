@@ -1,2 +1,2 @@
 #!/bin/bash
-python3 /home/user/Projects/OS-Toolkit/Reprompty/VSCodeSidePanelLayout/linux_layout.py --once --slot A "$@"
+exec python3 "$(dirname "$(readlink -f "$0")")/../../VSCodeSidePanelLayout/linux_layout.py" --once --slot A "$@"
