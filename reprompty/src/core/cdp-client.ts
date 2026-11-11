@@ -213,7 +213,7 @@ function findAgentIframeTarget(
   return null;
 }
 
-async function getCdpTargets(port: number): Promise<CdpTarget[]> {
+export async function getCdpTargets(port: number): Promise<CdpTarget[]> {
   return new Promise((resolve, reject) => {
     const req = http.get(`http://127.0.0.1:${port}/json`, (res) => {
       let data = "";
@@ -263,16 +263,17 @@ export async function getCdpWindowSignature(port: number): Promise<string> {
     .join("|");
 }
 
-function cdpEvaluate(
+export function cdpSend<T = Record<string, unknown>>(
   ws: InstanceType<typeof WS>,
-  expression: string,
+  method: string,
+  params: Record<string, unknown>,
   id: number,
   timeoutMs = 8000
-): Promise<{ result?: { result?: { value?: unknown; type?: string } } }> {
+): Promise<{ result?: T }> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       ws.off("message", handler);
-      reject(new Error("CDP evaluate timed out"));
+      reject(new Error(`CDP ${method} timed out`));
     }, timeoutMs);
 
     const handler = (data: Buffer | string) => {
@@ -293,23 +294,32 @@ function cdpEvaluate(
     };
 
     ws.on("message", handler);
-    ws.send(
-      JSON.stringify({
-        id,
-        method: "Runtime.evaluate",
-        params: { expression, returnByValue: true, awaitPromise: true },
-      })
-    );
+    ws.send(JSON.stringify({ id, method, params }));
   });
 }
 
-function getEvaluationValue(message: {
+function cdpEvaluate(
+  ws: InstanceType<typeof WS>,
+  expression: string,
+  id: number,
+  timeoutMs = 8000
+): Promise<{ result?: { result?: { value?: unknown; type?: string } } }> {
+  return cdpSend<{ result?: { value?: unknown; type?: string } }>(
+    ws,
+    "Runtime.evaluate",
+    { expression, returnByValue: true, awaitPromise: true },
+    id,
+    timeoutMs
+  );
+}
+
+export function getEvaluationValue(message: {
   result?: { result?: { value?: unknown; type?: string } };
 }): unknown {
   return message?.result?.result?.value;
 }
 
-async function withTargetSocket<T>(
+export async function withTargetSocket<T>(
   target: CdpTarget,
   callback: (ws: InstanceType<typeof WS>) => Promise<T>
 ): Promise<T> {
