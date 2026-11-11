@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 import {
   findWindowAgentState,
   groupTargetsByPage,
@@ -128,6 +128,9 @@ describe("agent detection helpers", () => {
     );
     expect(
       resolveBackgroundRoute("unknown", ["claude-code", "codex"], false)
-    ).toBe("foreground");
+    ).toBe("cdp-codex");
+    expect(resolveBackgroundRoute("unknown", ["claude-code"], false)).toBe(
+      "foreground"
+    );
   });
 });
