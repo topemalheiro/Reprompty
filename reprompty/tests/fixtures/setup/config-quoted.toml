@@ -1,0 +1,11 @@
+# Codex settings
+model = "gpt-5-codex"
+
+[mcp_servers."reprompty"]
+command = "/home/example/old/reprompty-mcp-server"
+args = []
+startup_timeout_sec = 30
+
+# Another server after ours
+[mcp_servers.docs]
+command = "docs-mcp"
