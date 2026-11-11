@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Linux layout script for VS Code: window positioning and side panel resizing.
+Linux layout script for VS Code window positioning and side panel resizing.
 Uses Chrome DevTools Protocol (CDP) for cursor-free sash drag, with fallback
 to state.vscdb modification. Supports KDE multi-monitor via kscreen-doctor.
 
@@ -23,6 +23,7 @@ import json
 import os
 import random
 import re
+import shutil
 import sqlite3
 import socket
 import struct
@@ -335,7 +336,11 @@ def compute_layout(monitors: list, layout_mode: str, panel_side: str) -> dict:
 # Tool detection
 # =============================================================================
 
-KDOTOOL_PATH = os.path.expanduser("~/.local/bin/kdotool")
+KDOTOOL_PATH = (
+    os.environ.get("REPROMPTY_KDOTOOL")
+    or shutil.which("kdotool")
+    or os.path.expanduser("~/.local/bin/kdotool")
+)
 
 
 def _has_kdotool() -> bool:
@@ -345,7 +350,6 @@ def _has_kdotool() -> bool:
 def _has_xdotool() -> bool:
     try:
         env = os.environ.copy()
-        env["LD_LIBRARY_PATH"] = os.path.expanduser("~/.local/lib") + ":" + env.get("LD_LIBRARY_PATH", "")
         result = subprocess.run(["xdotool", "version"], capture_output=True, timeout=2, env=env)
         return result.returncode == 0
     except Exception:
@@ -370,7 +374,6 @@ def get_active_window(log_file: Optional[str] = None) -> Optional[Tuple[str, str
     # Fallback to xdotool (X11/XWayland)
     if _has_xdotool():
         env = os.environ.copy()
-        env["LD_LIBRARY_PATH"] = os.path.expanduser("~/.local/lib") + ":" + env.get("LD_LIBRARY_PATH", "")
         try:
             result = subprocess.run(
                 ["xdotool", "getactivewindow"],
@@ -426,12 +429,12 @@ def get_desktop_for_window(wid: str, log_file: Optional[str] = None) -> Optional
 
 
 def find_vscode_window(title: Optional[str] = None, handle: Optional[str] = None, log_file: Optional[str] = None) -> Optional[str]:
-    """Find VS Code: window id using kdotool (Wayland) or xdotool (X11).
+    """Find VS Code window id using kdotool (Wayland) or xdotool (X11).
     When no specific title or handle is given, prefers the currently active window."""
     if handle is not None:
         return handle
 
-    search_terms = [title] if title else ["Visual Studio Code", "Kilo Code", "Kimi Code", "VSCodium", "Code: - OSS"]
+    search_terms = [title] if title else ["Visual Studio Code", "Kilo Code", "Kimi Code", "VSCodium", "Code - OSS"]
 
     # If no specific title/handle requested, try active window first
     if not title and not handle:
@@ -444,7 +447,7 @@ def find_vscode_window(title: Optional[str] = None, handle: Optional[str] = None
                 log(f"Using active window: {wid} ('{active_title}')", log_file)
                 return wid
             else:
-                log(f"Active window '{active_title}' is not a VS Code: editor, falling back to search", log_file)
+                log(f"Active window '{active_title}' is not a VS Code editor, falling back to search", log_file)
 
     # Try kdotool first (KDE Wayland native)
     if _has_kdotool():
@@ -480,7 +483,7 @@ def find_vscode_window(title: Optional[str] = None, handle: Optional[str] = None
             # filter that ran get_desktop_for_window per candidate and was bypassed
             # entirely whenever exactly one window matched.)
             log(
-                f"Using VS Code: window on desktop {current_desktop}: "
+                f"Using VS Code window on desktop {current_desktop}: "
                 f"{all_matches[0][0]} ('{all_matches[0][1]}')",
                 log_file,
             )
@@ -493,7 +496,7 @@ def find_vscode_window(title: Optional[str] = None, handle: Optional[str] = None
             # routes down the xdotool path, silently no-opping on a Wayland window.
             # Better to do nothing and say so than to act on the wrong desktop.
             log(
-                f"No VS Code: window on desktop {current_desktop}; doing nothing",
+                f"No VS Code window on desktop {current_desktop}; doing nothing",
                 log_file,
             )
             return None
@@ -501,7 +504,6 @@ def find_vscode_window(title: Optional[str] = None, handle: Optional[str] = None
     # Fallback to xdotool (X11/XWayland)
     if _has_xdotool():
         env = os.environ.copy()
-        env["LD_LIBRARY_PATH"] = os.path.expanduser("~/.local/lib") + ":" + env.get("LD_LIBRARY_PATH", "")
         for search_term in search_terms:
             try:
                 result = subprocess.run(
@@ -519,7 +521,7 @@ def find_vscode_window(title: Optional[str] = None, handle: Optional[str] = None
                             )
                             if name_result.returncode == 0:
                                 name = name_result.stdout.strip()
-                                if any(k in name for k in ["Visual Studio Code", "Kilo Code", "Kimi Code", "VSCodium", "Code: - OSS"]):
+                                if any(k in name for k in ["Visual Studio Code", "Kilo Code", "Kimi Code", "VSCodium", "Code - OSS"]):
                                     return str(wid)
                         except Exception:
                             continue
@@ -583,7 +585,6 @@ def get_window_title(wid: str) -> Optional[str]:
         return None
     # Fallback to xdotool
     env = os.environ.copy()
-    env["LD_LIBRARY_PATH"] = os.path.expanduser("~/.local/lib") + ":" + env.get("LD_LIBRARY_PATH", "")
     try:
         result = subprocess.run(
             ["xdotool", "getwindowname", str(wid)],
@@ -650,7 +651,6 @@ def move_window(wid: str, x: int, y: int, width: int, height: int, log_file: Opt
 
     # Fallback to xdotool (X11/XWayland)
     env = os.environ.copy()
-    env["LD_LIBRARY_PATH"] = os.path.expanduser("~/.local/lib") + ":" + env.get("LD_LIBRARY_PATH", "")
     try:
         subprocess.run(["xdotool", "windowmove", str(wid), str(x), str(y)], capture_output=True, timeout=5, env=env)
         subprocess.run(["xdotool", "windowsize", str(wid), str(width), str(height)], capture_output=True, timeout=5, env=env)
@@ -662,7 +662,7 @@ def move_window(wid: str, x: int, y: int, width: int, height: int, log_file: Opt
 
 
 def trigger_layout_refresh(wid: str, log_file: Optional[str] = None) -> bool:
-    """Trigger VS Code: to recalculate layout by briefly resizing the window."""
+    """Trigger VS Code to recalculate layout by briefly resizing the window."""
     is_kdotool = wid.startswith("{")
 
     try:
@@ -691,7 +691,6 @@ def trigger_layout_refresh(wid: str, log_file: Optional[str] = None) -> bool:
             )
         else:
             env = os.environ.copy()
-            env["LD_LIBRARY_PATH"] = os.path.expanduser("~/.local/lib") + ":" + env.get("LD_LIBRARY_PATH", "")
             result = subprocess.run(
                 ["xdotool", "getwindowgeometry", str(wid)],
                 capture_output=True, text=True, timeout=5, env=env
@@ -728,7 +727,7 @@ def get_state_db_path() -> str:
     for p in candidates:
         if os.path.exists(p):
             return p
-    raise FileNotFoundError("VS Code: state database not found")
+    raise FileNotFoundError("VS Code state database not found")
 
 
 def set_auxiliary_bar_width(width: int, log_file: Optional[str] = None) -> bool:
@@ -781,6 +780,11 @@ def _get_cached_ws(ws_url: str) -> Optional[MinimalWebSocket]:
 def _cache_ws(ws_url: str, ws: MinimalWebSocket) -> None:
     _cdp_websockets[ws_url] = ws
 
+def _strip_jsonc(text: str) -> str:
+    """argv.json is JSONC: drop // and /* */ comments and trailing commas, keeping strings."""
+    text = re.sub(r'("(?:\\.|[^"\\])*")|//[^\n]*|/\*.*?\*/', lambda m: m.group(1) or "", text, flags=re.S)
+    return re.sub(r'("(?:\\.|[^"\\])*")|,(\s*[}\]])', lambda m: m.group(1) or m.group(2), text)
+
 def get_cdp_port() -> int:
     """Get CDP port from DevToolsActivePort or argv.json."""
     home = os.environ.get("HOME", ".")
@@ -804,14 +808,16 @@ def get_cdp_port() -> int:
     # Fallback to argv.json
     argv_candidates = [
         os.path.join(home, ".vscode", "argv.json"),
+        os.path.join(home, ".vscode-oss", "argv.json"),
+        os.path.join(home, ".vscode-insiders", "argv.json"),
         os.path.join(home, ".config", "VSCodium", "argv.json"),
         os.path.join(home, ".config", "Code - OSS", "argv.json"),
     ]
     for argv_file in argv_candidates:
         if os.path.exists(argv_file):
             try:
-                with open(argv_file, "r") as f:
-                    data = json.load(f)
+                with open(argv_file, "r", encoding="utf-8") as f:
+                    data = json.loads(_strip_jsonc(f.read()))
                 port = data.get("remote-debugging-port")
                 if port:
                     return int(str(port))
@@ -1291,7 +1297,7 @@ def run_layout(args: argparse.Namespace) -> dict:
     handle = args.window_handle if args.window_handle else None
     wid = find_vscode_window(title=args.window_title, handle=handle, log_file=log_file)
     if not wid:
-        return {"ok": False, "error": "No VS Code: window found"}
+        return {"ok": False, "error": "No VS Code window found"}
 
     log(f"Found window: {wid}", log_file)
 
@@ -1495,10 +1501,10 @@ def daemon_main():
 
 
 def find_vscode_window_list() -> list:
-    """Return a list of (uuid_or_id, caption) for all VS Code: windows."""
+    """Return a list of (uuid_or_id, caption) for all VS Code windows."""
     results = []
     if _has_kdotool():
-        for term in ["Visual Studio Code", "Kilo Code", "Kimi Code", "VSCodium", "Code: - OSS"]:
+        for term in ["Visual Studio Code", "Kilo Code", "Kimi Code", "VSCodium", "Code - OSS"]:
             try:
                 proc = subprocess.run(
                     [KDOTOOL_PATH, "search", "--title", term],
@@ -1574,7 +1580,7 @@ def try_daemon_socket(args: argparse.Namespace) -> Optional[dict]:
 
 def main():
     ensure_linux_session_env()
-    parser = argparse.ArgumentParser(description="VS Code: Linux Layout")
+    parser = argparse.ArgumentParser(description="VS Code Linux Layout")
     parser.add_argument("--once", action="store_true", help="Run once and exit")
     parser.add_argument("--daemon", action="store_true", help="Run as background daemon listening on Unix socket")
     parser.add_argument("--dual", action="store_true", help="Dual monitor layout")
