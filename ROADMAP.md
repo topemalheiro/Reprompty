@@ -8,7 +8,7 @@ What's planned for Reprompty, roughly in order. Ideas and feedback are welcome i
 | --- | --- |
 | Now | Agent status dashboard, shut down when all agents are done, usage throttle, read agent replies, panel checks |
 | Next | Master agent mode, files viewer, shared chat history, event triggers, prompt templates, task queue, Windows parity, security hardening, Electron upgrade, automatic updates, AUR and winget packages |
-| Later | Local explainer agent, account switching, KDE Activities, more editors, GNOME and macOS, MCP server on npm |
+| Later | Local explainer agent, account switching, remote desktop, KDE Activities, more editors, GNOME and macOS, MCP server on npm |
 
 ## Main features
 
@@ -78,6 +78,7 @@ Switch between subscriptions, or between several accounts of the same agent (for
 - **Electron upgrade:** Electron 28 is out of support.
 - **Security hardening:** limit what other programs on your computer can do through VS Code's debugging port, and keep account logins in a vault that only you can read.
 - **MCP server on npm:** `npx reprompty-mcp` for people who only want the agent tools.
+- **Remote desktop:** check on your agents and steer them from another device, through a remote desktop plugin.
 
 ## Recently done
 
