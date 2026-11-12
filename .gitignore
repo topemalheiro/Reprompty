@@ -38,6 +38,9 @@ plans/
 .security-key
 logs/security/
 
+# Local scratch folder
+gitignoreShite/
+
 # Built Electron apps (too large for GitHub)
 reprompty/release*/
 reprompty/reprompty-cdp-debug.log

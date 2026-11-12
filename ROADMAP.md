@@ -20,7 +20,7 @@ A fader sets how much of an agent's 5-hour usage window it may use. Past that po
 
 ### Shut down when all agents are done
 
-When every agent has finished, Reprompty shuts the computer down after a countdown you can cancel. Useful for long runs overnight.
+Give your agents a batch of tasks, leave them running overnight, and Reprompty shuts the computer down once every agent has finished, after a countdown you can cancel. Together with the [task queue](#agent-coordination), this is what lets batches of tasks run unattended.
 
 **How:** an agent counts as finished when it hasn't been busy or waiting for your input for a few minutes and nothing is queued for it. That comes from the agent status dashboard and from the agents' end-of-turn hooks (Claude Code's Stop hook, Codex's `notify` setting). Then a notification with a Cancel button, one last check when the countdown ends, and `systemctl poweroff` on Linux or `shutdown /s` on Windows. A dry-run mode shows what would happen.
 
