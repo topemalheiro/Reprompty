@@ -151,6 +151,7 @@ Reprompty is built with Electron, React, TypeScript and Vite. Its MCP server is 
 
 The full roadmap, with how each item is meant to work, is in [ROADMAP.md](ROADMAP.md). The main things planned:
 
+- **Workspace setup and restore (KDE Plasma):** one agent sets up several KDE Activities, each with its own virtual desktops for agents and tools, and presets bring every window, desktop and Activity back exactly where it was after a reboot.
 - **Usage throttle:** a fader that eases your agents off (lower reasoning effort, another model, a pause) before the 5-hour usage limit runs out.
 - **Overnight batches with auto shutdown:** give your agents a batch of tasks, leave them running overnight, and Reprompty shuts the computer down when every agent has finished.
 - **Master agent mode:** one agent directs the others, waits for them to finish and reads their answers.
