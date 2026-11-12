@@ -149,7 +149,16 @@ Reprompty is built with Electron, React, TypeScript and Vite. Its MCP server is 
 
 ## Roadmap
 
-Planned next: watching each agent's usage limit and easing off before it runs out, shutting the computer down when every agent is done, a master agent that directs the others, shared chat history between agents, Windows layouts and one-click installers. The full list is in [ROADMAP.md](ROADMAP.md).
+The full roadmap, with how each item is meant to work, is in [ROADMAP.md](ROADMAP.md). The main things planned:
+
+- **Usage throttle:** a fader that eases your agents off (lower reasoning effort, another model, a pause) before the 5-hour usage limit runs out.
+- **Overnight batches with auto shutdown:** give your agents a batch of tasks, leave them running overnight, and Reprompty shuts the computer down when every agent has finished.
+- **Master agent mode:** one agent directs the others, waits for them to finish and reads their answers.
+- **Files viewer:** every time you prompt an agent again, the files it read or changed open across your displays, so you can follow what it did.
+- **Shared chat history between agents**, through Graphiti or another free MCP memory server.
+- **Local explainer:** a model on your own computer explains why an agent did what it did.
+- **Account switching:** switch between subscriptions or accounts and continue each agent where it was.
+- **Windows layouts and one-click installers.**
 
 ## License
 
