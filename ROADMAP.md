@@ -6,11 +6,17 @@ What's planned for Reprompty, roughly in order. Ideas and feedback are welcome i
 
 | When | What |
 | --- | --- |
-| Now | Agent status dashboard, shut down when all agents are done, usage throttle, read agent replies, panel checks |
+| Now | Workspace setup and restore on KDE Plasma, agent status dashboard, shut down when all agents are done, usage throttle, read agent replies, panel checks |
 | Next | Master agent mode, files viewer, shared chat history, event triggers, prompt templates, task queue, Windows parity, security hardening, Electron upgrade, automatic updates, AUR and winget packages |
-| Later | Local explainer agent, account switching, remote desktop, KDE Activities, more editors, GNOME and macOS, MCP server on npm |
+| Later | Local explainer agent, account switching, remote desktop, more editors, GNOME and macOS, MCP server on npm |
 
 ## Main features
+
+### Workspace setup and restore (KDE Plasma)
+
+The main goal on KDE Plasma, where Reprompty works best. One agent sets up your whole workspace: several KDE Activities (separate workspaces), each with its own virtual desktops holding the agents or tools for that job. Presets for Activities then reopen every window, virtual desktop and Activity exactly where it was, so you can save an Activity together with what you were doing in it, or shut the computer down with everything open and get it all back after a reboot.
+
+**How:** build on today's task presets, which save your virtual desktops and project windows. Add Activities through KDE's Activities D-Bus service, keep track of which virtual desktops belong to which Activity, record each window's Activity, desktop, position and size through KWin, and restore them from the preset, on request or automatically after you log in.
 
 ### Usage throttle
 
@@ -63,7 +69,6 @@ Switch between subscriptions, or between several accounts of the same agent (for
 - **Event triggers:** run a prompt, a script or a skill when something happens, such as an agent finishing, a file changing or a usage limit getting close. *How:* a local endpoint that receives the agents' hooks, plus simple "when this happens, do that" rules.
 - **Task queue:** queue many tasks and hand them to free agents one at a time, with a list of what is pending, running and done. *How:* built on the status tools; send the next task when an agent goes idle.
 - **Prompt templates:** save prompts with XML sections and `{{variables}}`, fill them in and send them to any agent. *How:* template files in `~/.reprompty/templates`, a picker in the Send Prompt tab and a `send_template` tool.
-- **KDE Activities:** group desktops and windows into KDE Activities and switch whole work contexts at once. *How:* KDE's Activities D-Bus service, next to the existing KWin desktop code.
 
 ## Platform and project health
 
