@@ -3,8 +3,8 @@
 # reprompty-mcp: {"toolName": "voxtype_start_live", "label": "Start VoxType Live", "description": "Start VoxType Live streaming dictation", "args": ["start_live"]}
 # reprompty-mcp: {"toolName": "voxtype_stop_live", "label": "Stop VoxType Live", "description": "Stop VoxType Live streaming dictation", "args": ["stop_live"]}
 
-PYTHON="/home/user/Projects/OS-Toolkit/GitHubGrid/.venv/bin/python"
-LIVE_SCRIPT="/home/user/Projects/OS-Toolkit/VoxType/voxtype-live/voxtype-live.py"
+PYTHON="$HOME/Projects/OS-Toolkit/GitHubGrid/.venv/bin/python"
+LIVE_SCRIPT="$HOME/Projects/OS-Toolkit/VoxType/voxtype-live/voxtype-live.py"
 
 case "${1:-status}" in
   status)

@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 
 export interface LayoutSlot {
@@ -42,14 +43,13 @@ const IS_WINDOWS = process.platform === "win32";
 
 function getDefaultScriptPath(): string {
   if (IS_WINDOWS) {
-    return "C:\\Users\\user\\scripts\\VSCodeSidePanelLayout\\VSCodeSidePanelLayout.ps1";
+    return path.join(os.homedir(), "scripts", "VSCodeSidePanelLayout", "VSCodeSidePanelLayout.ps1");
   }
   // Linux: use the Python script. The Cython binary is hard to rebuild and has
   // repeatedly become stale, so we now default to the editable Python source.
   const pythonCandidates = [
     path.join(__dirname, "..", "..", "VSCodeSidePanelLayout", "linux_layout.py"),
     path.join(__dirname, "..", "..", "..", "VSCodeSidePanelLayout", "linux_layout.py"),
-    "/home/user/Projects/OS-Toolkit/Reprompty/VSCodeSidePanelLayout/linux_layout.py",
   ];
 
   for (const candidate of pythonCandidates) {

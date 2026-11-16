@@ -223,7 +223,7 @@ const OLD_DEFAULT_SLOTS: ReadonlyArray<{ geometry: readonly number[]; mode: Layo
   { geometry: [1360, 0, 1920, 1080, 960], mode: "single", hint: "HDMI-A-4 top monitor" },
 ];
 const OLD_GEOMETRY_KEYS = ["windowX", "windowY", "windowWidth", "windowHeight", "panelWidth"];
-const OLD_WINDOWS_SCRIPT = "C:\\Users\\user\\scripts\\VSCodeSidePanelLayout\\VSCodeSidePanelLayout.ps1";
+const OLD_WINDOWS_SCRIPT = /[\\/]Users[\\/][^\\/]+[\\/]scripts[\\/]VSCodeSidePanelLayout[\\/]VSCodeSidePanelLayout\.ps1$/i;
 const OLD_BUNDLED_SCRIPT = /[\\/]VSCodeSidePanelLayout[\\/](linux_layout\.py|reprompty-layout-cython)$/;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -231,10 +231,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isOldScriptPath(scriptPath: string): boolean {
-  return (
-    scriptPath.toLowerCase() === OLD_WINDOWS_SCRIPT.toLowerCase() ||
-    OLD_BUNDLED_SCRIPT.test(scriptPath)
-  );
+  return OLD_WINDOWS_SCRIPT.test(scriptPath) || OLD_BUNDLED_SCRIPT.test(scriptPath);
 }
 
 function migrateSlot(slot: Record<string, unknown>, platform: string): Record<string, unknown> | null {

@@ -26,7 +26,7 @@ const fixture: { cases: FixtureCase[] } = JSON.parse(
   fs.readFileSync(new URL("./fixtures/monitor-layouts.json", import.meta.url), "utf-8")
 );
 
-const OLD_WINDOWS_SCRIPT = "C:\\Users\\user\\scripts\\VSCodeSidePanelLayout\\VSCodeSidePanelLayout.ps1";
+const OLD_WINDOWS_SCRIPT = "C:\\Users\\someone\\scripts\\VSCodeSidePanelLayout\\VSCodeSidePanelLayout.ps1";
 
 function slot(overrides: Partial<LayoutSlot>): LayoutSlot {
   return { id: "id", letter: "A", name: "Slot", scriptArgs: [], hotkey: null, monitorHint: "", ...overrides };
