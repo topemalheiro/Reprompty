@@ -43,7 +43,7 @@ function sourceInstall(): InstallContext {
     version: "0.3.0",
     appRoot: root,
     serverJs: path.join(root, "dist", "mcp", "server.js"),
-    skillFile: path.join(root, "skills", "reprompty", "SKILL.md"),
+    skillFile: path.join(root, "resources", "agent-guide.md"),
     layoutScript: null,
     runtime: null,
   };

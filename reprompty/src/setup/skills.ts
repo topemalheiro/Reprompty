@@ -32,7 +32,7 @@ export const SKILL_AGENTS: readonly SkillAgent[] = ["claude", "codex", "kimi-cod
 const SKILL_PATH = ["reprompty", "SKILL.md"];
 
 export function skillSource(): string {
-  return appResource("skills", ...SKILL_PATH);
+  return appResource("resources", "agent-guide.md");
 }
 
 export function missingSkillMessage(source: string): string {

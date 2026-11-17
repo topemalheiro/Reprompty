@@ -11,8 +11,13 @@ RESEARCH-*.md
 # IDE
 .vscode/
 .idea/
-.claude/*
-!.claude/skills/
+
+# Agent instructions, skills and settings stay local
+CLAUDE.md
+AGENTS.md
+.claude/
+.agents/
+.kilocode/
 
 # OS
 .DS_Store
@@ -26,8 +31,7 @@ VSCodeSidePanelLayout/
 .auto-claude/
 
 # Reprompty generated directories
-.kilo/*
-!.kilo/skills/
+.kilo/
 plans/
 
 # Aperant-MCP generated files

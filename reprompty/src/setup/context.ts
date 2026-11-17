@@ -88,7 +88,7 @@ export function detectInstallContext(o: DetectOptions = {}): InstallContext {
     version: o.root === undefined ? appVersion() : readVersion(join("package.json")),
     appRoot: root,
     serverJs: join("dist", "mcp", "server.js"),
-    skillFile: join("skills", "reprompty", "SKILL.md"),
+    skillFile: join("resources", "agent-guide.md"),
     layoutScript: isFile(layoutScript) ? layoutScript : null,
   };
 

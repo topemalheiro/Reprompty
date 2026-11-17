@@ -35,7 +35,7 @@ function context(kind: InstallContext["kind"], fields: Partial<InstallContext> =
     version: "0.3.0",
     appRoot: root,
     serverJs: `${root}/dist/mcp/server.js`,
-    skillFile: `${root}/skills/reprompty/SKILL.md`,
+    skillFile: `${root}/resources/agent-guide.md`,
     layoutScript: `${root}/layout/linux_layout.py`,
     runtime: null,
     ...fields,

@@ -31,7 +31,7 @@ beforeEach(() => {
   pkg = path.join(t.root, "Reprompty", "reprompty");
   writeFile(path.join(pkg, "package.json"), JSON.stringify({ name: "reprompty", version: "0.3.0" }));
   writeFile(path.join(pkg, "dist", "mcp", "server.js"), FAKE_SERVER);
-  writeFile(path.join(pkg, "skills", "reprompty", "SKILL.md"), "---\nname: reprompty\ndescription: test\n---\n");
+  writeFile(path.join(pkg, "resources", "agent-guide.md"), "---\nname: reprompty\ndescription: test\n---\n");
 });
 
 afterEach(() => {

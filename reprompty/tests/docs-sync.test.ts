@@ -5,12 +5,7 @@ import { describe, expect, it } from "vitest";
 const repoRoot = path.resolve(__dirname, "..", "..");
 const read = (relativePath: string) => fs.readFileSync(path.join(repoRoot, relativePath));
 
-const SKILL = "reprompty/skills/reprompty/SKILL.md";
-const SKILL_COPIES = [
-  ".claude/skills/reprompty/SKILL.md",
-  ".agents/skills/reprompty/SKILL.md",
-  ".kilocode/skills/reprompty/SKILL.md",
-];
+const SKILL = "reprompty/resources/agent-guide.md";
 
 // Parsed as text: importing src/mcp/index.ts would start the managers and write ~/.reprompty.
 function builtInToolNames(source: string): string[] {
@@ -21,15 +16,8 @@ function builtInToolNames(source: string): string[] {
 }
 
 describe("docs sync", () => {
-  const skill = read(SKILL);
-  const skillText = skill.toString("utf-8");
+  const skillText = read(SKILL).toString("utf-8");
   const toolNames = builtInToolNames(read("reprompty/src/mcp/index.ts").toString("utf-8"));
-
-  it("keeps the repo copies of the skill identical to the canonical one", () => {
-    for (const copy of SKILL_COPIES) {
-      expect(read(copy).equals(skill), `${copy} differs from ${SKILL}`).toBe(true);
-    }
-  });
 
   it("gives the skill the name and description agents need to load it", () => {
     expect(skillText).toMatch(/^---\r?\nname: reprompty\r?\ndescription: \S.*\r?\n---\r?\n/);

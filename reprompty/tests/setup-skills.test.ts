@@ -13,7 +13,7 @@ let source: string;
 
 beforeEach(() => {
   t = makeTempHome();
-  source = writeFile(path.join(t.root, "app", "skills", "reprompty", "SKILL.md"), SKILL);
+  source = writeFile(path.join(t.root, "app", "resources", "agent-guide.md"), SKILL);
 });
 
 afterEach(() => {
@@ -62,8 +62,8 @@ describe("skillTargets", () => {
     expect(target("kimi-code").file).toBe(t.at("kimi-code", "skills", "reprompty", "SKILL.md"));
   });
 
-  it("comes from skills/reprompty/SKILL.md in the package", () => {
-    expect(skillSource().endsWith(path.join("skills", "reprompty", "SKILL.md"))).toBe(true);
+  it("comes from resources/agent-guide.md in the package", () => {
+    expect(skillSource().endsWith(path.join("resources", "agent-guide.md"))).toBe(true);
   });
 });
 
