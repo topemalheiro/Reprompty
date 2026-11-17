@@ -1,8 +1,8 @@
 #!/bin/bash
 # new-task.sh — Start a new task in one go: copy "0 Example Task"
-# to "<n> New Task" (n = one past the highest numbered task, so tasks sort chronologically) with a
-# Video Instructions.md skeleton, open it in a duplicate of the Work workspace on a new virtual
-# desktop, and snap that window to the bottom monitors (layout slot A, the Ctrl+Alt+V layout).
+# to "<n> New Task" (n = one past the highest numbered task, so tasks sort chronologically), open it
+# in a duplicate of the Work workspace on a new virtual desktop, and snap that window to the bottom
+# monitors (layout slot A, the Ctrl+Alt+V layout).
 # Bound to Ctrl+Super+S by `register`, through `shortcut`: while a Spite VS Code window is focused,
 # the key opens a new Spite desktop instead (spite-macros new-desktop). `run-light` (Ctrl+Super+Q)
 # makes the task folder and its virtual desktop but opens no window, for working in the one VS Code
@@ -18,10 +18,11 @@
 
 set -euo pipefail
 
-CONFIG="$HOME/.reprompty/new-task.env"  # can set WORK_DIR and TASKS_DIR
+CONFIG="$HOME/.reprompty/new-task.env"  # can set WORK_DIR, TASKS_DIR and OPEN_FILE
 [[ -f "$CONFIG" ]] && source "$CONFIG"
 WORK_DIR="${WORK_DIR:-$HOME/Projects/Work}"
 TASKS_DIR="${TASKS_DIR:-$WORK_DIR/Tasks}"
+OPEN_FILE="${OPEN_FILE:-}"  # a file in the new task to open with the workspace
 TEMPLATE_DIR="$TASKS_DIR/0 Example Task"
 LAYOUT_DUAL="$(dirname "$(realpath "$0")")/../reprompty/linux/layout-dual.sh"
 KDOTOOL="$HOME/.local/bin/kdotool"
@@ -111,27 +112,6 @@ run() {
     done
 
     cp -r "$TEMPLATE_DIR" "$TASKS_DIR/$name"
-
-    # The recording aid that the deliverables step fills in; never uploaded. A template copy wins.
-    local instructions="$TASKS_DIR/$name/Video Instructions.md"
-    if [[ ! -e "$instructions" ]]; then
-        cat >"$instructions" <<'EOF'
-# Video instructions (not uploaded)
-
-Not uploaded, and not to be recorded: keep OBS's Top-Left source hidden while this is open (the
-opener hides it).
-
-## Files to open and show (in Problem Files)
-
-| File | Lines | What it shows |
-|---|---|---|
-
-## Show on screen (not in the files)
-
-## What the rubric needs the video to ask for
-EOF
-    fi
-
     log "Created $TASKS_DIR/$name"
 
     local count desktop previous=""
@@ -157,7 +137,11 @@ EOF
 
     # Detach code's output: a cold-started VS Code would otherwise hold our stdout open, and
     # Reprompty's MCP runner waits for that pipe to close.
-    code -n "$workspace" "$TASKS_DIR/$name/(Gold) Human Support Files/Gold.md" </dev/null >/dev/null 2>&1
+    local open=("$workspace")
+    if [[ -n "$OPEN_FILE" ]]; then
+        open+=("$TASKS_DIR/$name/$OPEN_FILE")
+    fi
+    code -n "${open[@]}" </dev/null >/dev/null 2>&1
 
     # Poll once a second: every kdotool call loads a KWin script, and Reprompty had to throttle
     # those to stop Plasma crashing. kdotool sometimes prints nothing, so empty means "try again".
